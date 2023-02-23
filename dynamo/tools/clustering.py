@@ -202,6 +202,9 @@ def leiden(
     (3) aggregation of the network based on the refined partition, using the non-refined partition to create an initial
     partition for the aggregate network.
 
+    Please note that we have replaced the integrated leiden method from cdlib package with that from the original
+    leidenalg package.
+
     Args:
         adata: an adata object
         resolution: the resolution of the clustering that determines the level of detail in the clustering process.
@@ -228,7 +231,7 @@ def leiden(
         adata: An updated AnnData object with the leiden clustering results added. The adata is updated up with the
         `result_key` key to use for saving clustering results which will be included in both adata.obs and adata.uns.
         adata.obs[result_key] saves the clustering identify of each cell where the adata.uns[result_key] saves the
-        relevant parameters for the leiden clustering .
+        relevant parameters for the leiden clustering.
     """
 
     kwargs.update(
@@ -287,6 +290,9 @@ def louvain(
     quality function. In the aggregation phase, an aggregate network is created based on the partition obtained in the
     local moving phase. Each community in this partition becomes a node in the aggregate network. The two phases are
     repeated until the quality function cannot be increased further.
+
+    Please note that we have replaced the integrated louvain method from cdlib package with that from the original
+    leidenalg package.
 
     Args:
         adata: an adata object
