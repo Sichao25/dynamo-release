@@ -40,6 +40,10 @@ def fit_labeling_synthesis(new, total, t, intercept=False, perc_left=None, perc_
     return K, R2
 
 
+def fit_total_to_spliced(total, spliced):
+    return [fit_linreg(spliced[i], total[i], intercept=False, r2=False)[0] for i in range(total.shape[0])]
+
+
 def compute_gamma_synthesis(K, T):
     gamma, _, r2, _ = fit_linreg(T, -np.log(1 - K))
     return gamma, r2

@@ -27,7 +27,7 @@ from ..dynamo_logger import (
 from ..estimation.csc.utils_velocity import solve_alpha_2p_mat
 from ..estimation.csc.velocity import Velocity, fit_linreg, ss_estimation
 from ..estimation.tsc.estimation_kinetic import *
-from ..estimation.tsc.twostep import fit_slope_stochastic, lin_reg_gamma_synthesis
+from ..estimation.tsc.twostep import fit_slope_stochastic, fit_total_to_spliced, lin_reg_gamma_synthesis
 from ..estimation.tsc.utils_kinetic import *
 from .moments import (
     moments,
@@ -1166,6 +1166,74 @@ def kinetic_model(
                     X_data,
                     X_fit_data,
                 )
+        elif est_method == "twostep_gamma_optimized":
+            if has_splicing:
+                layers = (
+                    ["M_u", "M_s", "M_t", "M_n"]
+                    if ("M_u" in subset_adata.layers.keys() and data_type == "smoothed")
+                    else ["X_u", "X_s", "X_t", "X_n"]
+                )
+                U, S, Total, New = (
+                    subset_adata.layers[layers[0]].T,
+                    subset_adata.layers[layers[1]].T,
+                    subset_adata.layers[layers[2]].T,
+                    subset_adata.layers[layers[3]].T,
+                )
+                US, S2 = (
+                    subset_adata.layers["M_us"].T,
+                    subset_adata.layers["M_ss"].T,
+                )
+                # gamma, gamma_r2 = lin_reg_gamma_synthesis(U, Ul, time, perc_right=100)
+                (
+                    gamma_k,
+                    gamma_b,
+                    gamma_all_r2,
+                    gamma_all_logLL,
+                ) = fit_slope_stochastic(S, U, US, S2, perc_left=None, perc_right=100)
+                (
+                    gamma,
+                    gamma_r2,
+                    X_data,
+                    mean_R2,
+                    K_fit,
+                ) = lin_reg_gamma_synthesis(Total, New, time, perc_right=100)
+
+                k = 1 - np.exp(-gamma[:, None] * time[None, :])
+                total_spliced_k = fit_total_to_spliced(total=Total, spliced=S)
+                gamma_spliced = gamma * total_spliced_k
+                beta = gamma_spliced / gamma_k  # gamma_k = gamma / beta
+
+                Estm_df = {
+                    "alpha": csr_matrix(gamma[:, None]).multiply(New).multiply(1 / k),
+                    "beta": beta,
+                    "gamma_k": gamma_k,
+                    "gamma_b": gamma_b,
+                    "gamma_k_r2": gamma_all_r2,
+                    "gamma_logLL": gamma_all_logLL,
+                    "gamma": gamma,
+                    "gamma_r2": gamma_r2,
+                    "mean_R2": mean_R2,
+                }
+                half_life = np.log(2) / gamma
+                cost, logLL, _param_ranges, X_data, X_fit_data = (
+                    None,
+                    None,
+                    None,
+                    X_data,
+                    K_fit,
+                )
+
+                return (
+                    Estm_df,
+                    half_life,
+                    cost,
+                    logLL,
+                    _param_ranges,
+                    X_data,
+                    X_fit_data,
+                )
+            else:
+                raise NotImplementedError(f"Spliced information is missing in current est_method.")
         elif est_method == "direct":
             if has_splicing and splicing_labeling:
                 layers = (
