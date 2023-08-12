@@ -1,33 +1,22 @@
+from typing import List, Union
+
 import numpy as np
-from scipy.sparse import issparse
+from scipy.sparse import issparse, csr_matrix
 from tqdm import tqdm
 
 from ...tools.utils import calc_norm_loglikelihood, calc_R2, elem_prod, find_extreme
 from ..csc.utils_velocity import fit_linreg, fit_stochastic_linreg, fit_first_order_deg_lsq
 
 
-def fit_beta_ss(t, U):
-    """Estimate beta and gamma with the degradation data using the least squares method.
+def fit_beta_ss(t: Union[np.ndarray, csr_matrix], U: Union[np.ndarray, csr_matrix]) -> np.ndarray:
+    """Estimate beta using the least squares method.
 
-    Arguments
-    ---------
-        t: :class:`~numpy.ndarray`
-            A vector of time points.
-        U: :class:`~numpy.ndarray`
-            A matrix of unspliced mRNA counts. Dimension: genes x cells.
-        S: :class:`~numpy.ndarray`
-            A matrix of spliced mRNA counts. Dimension: genes x cells.
+    Args:
+        t: a vector of time points.
+        U: a matrix of unspliced mRNA counts.
 
-    Returns
-    -------
-        beta: :class:`~numpy.ndarray`
-            A vector of betas for all the genes.
-        gamma: :class:`~numpy.ndarray`
-            A vector of gammas for all the genes.
-        u0: float
-            Initial value of u.
-        s0: float
-            Initial value of s.
+    Returns:
+        A vector of betas for all the genes.
     """
     n = U.shape[0]  # self.get_n_genes(data=U)
     beta = np.zeros(n)
@@ -72,7 +61,18 @@ def fit_labeling_synthesis(new, total, t, intercept=False, perc_left=None, perc_
     return K, R2
 
 
-def fit_total_to_spliced(total, spliced):
+def fit_total_to_spliced(total: np.ndarray, spliced: np.ndarray) -> List:
+    """Calculate the slope for gamma estimation. The total gamma and spliced gamma are not the same. Their relation can
+    be expressed as:
+        spliced gamma / total gamma = total / spliced
+
+    Args:
+        total: a matrix of total RNA.
+        spliced: a matrix of spliced RNA.
+
+    Returns:
+        The k slope of total and spliced.
+    """
     return [fit_linreg(spliced[i], total[i], intercept=False, r2=False)[0] for i in range(total.shape[0])]
 
 
