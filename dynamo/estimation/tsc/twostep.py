@@ -3,7 +3,39 @@ from scipy.sparse import issparse
 from tqdm import tqdm
 
 from ...tools.utils import calc_norm_loglikelihood, calc_R2, elem_prod, find_extreme
-from ..csc.utils_velocity import fit_linreg, fit_stochastic_linreg
+from ..csc.utils_velocity import fit_linreg, fit_stochastic_linreg, fit_first_order_deg_lsq
+
+
+def fit_beta_ss(t, U):
+    """Estimate beta and gamma with the degradation data using the least squares method.
+
+    Arguments
+    ---------
+        t: :class:`~numpy.ndarray`
+            A vector of time points.
+        U: :class:`~numpy.ndarray`
+            A matrix of unspliced mRNA counts. Dimension: genes x cells.
+        S: :class:`~numpy.ndarray`
+            A matrix of spliced mRNA counts. Dimension: genes x cells.
+
+    Returns
+    -------
+        beta: :class:`~numpy.ndarray`
+            A vector of betas for all the genes.
+        gamma: :class:`~numpy.ndarray`
+            A vector of gammas for all the genes.
+        u0: float
+            Initial value of u.
+        s0: float
+            Initial value of s.
+    """
+    n = U.shape[0]  # self.get_n_genes(data=U)
+    beta = np.zeros(n)
+    u0, s0 = np.zeros(n), np.zeros(n)
+
+    for i in tqdm(range(n), desc="estimating beta"):
+        beta[i], u0[i] = fit_first_order_deg_lsq(t, U[i])
+    return beta
 
 
 def fit_slope_stochastic(S, U, US, S2, perc_left=None, perc_right=5):
