@@ -8,7 +8,7 @@ from ...tools.utils import calc_norm_loglikelihood, calc_R2, elem_prod, find_ext
 from ..csc.utils_velocity import fit_linreg, fit_stochastic_linreg, fit_first_order_deg_lsq
 
 
-def fit_beta_ss(t: Union[np.ndarray, csr_matrix], U: Union[np.ndarray, csr_matrix]) -> np.ndarray:
+def lin_reg_beta_synthesis(U, UL, time, perc_right=100) -> np.ndarray:
     """Estimate beta using the least squares method.
 
     Args:
@@ -18,13 +18,22 @@ def fit_beta_ss(t: Union[np.ndarray, csr_matrix], U: Union[np.ndarray, csr_matri
     Returns:
         A vector of betas for all the genes.
     """
-    n = U.shape[0]  # self.get_n_genes(data=U)
-    beta = np.zeros(n)
-    u0, s0 = np.zeros(n), np.zeros(n)
+    n_var = U.shape[0]
+    mean_R2, beta, r2 = np.zeros(n_var), np.zeros(n_var), np.zeros(n_var)
+    K_list, K_fit_list = [None] * n_var, [None] * n_var
+    for i, r, n in tqdm(
+            zip(np.arange(n_var), U, UL),
+            "Estimate beta via linear regression of t vs. -ln(1-K)",
+    ):
+        r = r.A.flatten() if issparse(r) else r.flatten()
+        n = n.A.flatten() if issparse(n) else n.flatten()
 
-    for i in tqdm(range(n), desc="estimating beta"):
-        beta[i], u0[i] = fit_first_order_deg_lsq(t, U[i])
-    return beta
+        K_list[i], R2 = fit_labeling_synthesis(n, r, time, perc_right=perc_right)
+        beta[i], r2[i] = compute_gamma_synthesis(K_list[i], np.unique(time))
+        K_fit_list[i] = np.unique(time) * beta[i]
+        mean_R2[i] = np.mean(R2)
+
+    return beta, r2, K_list, mean_R2, K_fit_list
 
 
 def fit_slope_stochastic(S, U, US, S2, perc_left=None, perc_right=5):

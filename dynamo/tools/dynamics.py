@@ -27,7 +27,7 @@ from ..dynamo_logger import (
 from ..estimation.csc.utils_velocity import solve_alpha_2p_mat
 from ..estimation.csc.velocity import Velocity, fit_linreg, ss_estimation
 from ..estimation.tsc.estimation_kinetic import *
-from ..estimation.tsc.twostep import fit_beta_ss, fit_slope_stochastic, fit_total_to_spliced, lin_reg_gamma_synthesis
+from ..estimation.tsc.twostep import lin_reg_beta_synthesis, fit_slope_stochastic, fit_total_to_spliced, lin_reg_gamma_synthesis
 from ..estimation.tsc.utils_kinetic import *
 from .moments import (
     moments,
@@ -1237,15 +1237,16 @@ def kinetic_model(
         elif est_method == "twostep_beta":
             if has_splicing:
                 layers = (
-                    ["M_u", "M_s", "M_t", "M_n"]
+                    ["M_u", "M_s", "M_t", "M_n", "M_ul"]
                     if ("M_u" in subset_adata.layers.keys() and data_type == "smoothed")
-                    else ["X_u", "X_s", "X_t", "X_n"]
+                    else ["X_u", "X_s", "X_t", "X_n", "X_ul"]
                 )
-                U, S, Total, New = (
+                U, S, Total, New, UL = (
                     subset_adata.layers[layers[0]].T,
                     subset_adata.layers[layers[1]].T,
                     subset_adata.layers[layers[2]].T,
                     subset_adata.layers[layers[3]].T,
+                    subset_adata.layers[layers[4]].T,
                 )
                 US, S2 = (
                     subset_adata.layers["M_us"].T,
@@ -1268,7 +1269,7 @@ def kinetic_model(
 
                 k = 1 - np.exp(-gamma[:, None] * time[None, :])
 
-                beta = fit_beta_ss(t=time, U=U)
+                beta, _, _, _, _ = lin_reg_beta_synthesis(U=U, UL=UL, time=time)
 
                 Estm_df = {
                     "alpha": csr_matrix(gamma[:, None]).multiply(New).multiply(1 / k),
