@@ -1,4 +1,4 @@
-from typing import List, Union
+from typing import List, Tuple, Union
 
 import numpy as np
 from scipy.sparse import issparse, csr_matrix
@@ -8,15 +8,17 @@ from ...tools.utils import calc_norm_loglikelihood, calc_R2, elem_prod, find_ext
 from ..csc.utils_velocity import fit_linreg, fit_stochastic_linreg, fit_first_order_deg_lsq
 
 
-def lin_reg_beta_synthesis(U, UL, time, perc_right=100) -> np.ndarray:
+def lin_reg_beta_synthesis(U: np.ndarray, UL: np.ndarray, time: np.ndarray, perc_right: int = 100) -> Tuple:
     """Estimate beta using the least squares method.
 
     Args:
-        t: a vector of time points.
         U: a matrix of unspliced mRNA counts.
+        UL: a matrix of new unspliced mRNA counts.
+        time: a vector of time points.
+        perc_right: the right percentile threshold to find extreme.
 
     Returns:
-        A vector of betas for all the genes.
+        A tuple containing betas and other metrics.
     """
     n_var = U.shape[0]
     mean_R2, beta, r2 = np.zeros(n_var), np.zeros(n_var), np.zeros(n_var)
