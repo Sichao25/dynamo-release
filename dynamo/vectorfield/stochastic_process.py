@@ -25,23 +25,25 @@ def diffusionMatrix(
     """Calculate the diffusion matrix from the estimated velocity vector and the reconstructed vector field.
 
     Args:
-        adata: an Annodata object.
+        adata: an Anndata object.
         X_data: The user supplied expression (embedding) data that will be used for calculating diffusion matrix directly.
         V_data: The user supplied velocity data that will be used for calculating diffusion matrix directly.
         genes: The list of genes that will be used to subset the data. If `None`, all genes will be used.
         layer: Which layer of the data will be used for diffusion matrix calculation.
         basis: Which basis of the data will be used for diffusion matrix calculation.
-        dims: The list of dimensions that will be selected for diffusion matrix calculation. If `None`, all dimensions will be used.
+        dims: The list of dimensions that will be selected for diffusion matrix calculation. If `None`, all dimensions
+            will be used.
         n: Number of nearest neighbors when the nearest neighbor graph is not included.
         VecFld: The reconstructed vector field function.
-        residual: Method to calculate residual velocity vectors for diffusion matrix calculation. If `average`, all velocity
-            of the nearest neighbor cells will be minused by its average velocity; if `vector_field`, all velocity will be
-            minused by the predicted velocity from the reconstructed deterministic velocity vector field.
+        residual: Method to calculate residual velocity vectors for diffusion matrix calculation. If `average`, all
+            velocity of the nearest neighbor cells will be minused by its average velocity; if `vector_field`, all
+            velocity will be minused by the predicted velocity from the reconstructed deterministic velocity vector
+            field.
 
     Returns:
-        adata: `AnnData` object that is updated with the `diffusion_matrix` key in the `uns` attribute which is a list of
-            the diffusion matrix for each cell. A column `diffusion` corresponds to the square root of the sum of all
-            elements for each cell's diffusion matrix will also be added.
+        AnnData` object that is updated with the `diffusion_matrix` key in the `uns` attribute which is a list of
+        the diffusion matrix for each cell. A column `diffusion` corresponds to the square root of the sum of all
+        elements for each cell's diffusion matrix will also be added.
     """
 
     if X_data is None or V_data is not None:

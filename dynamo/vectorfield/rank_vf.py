@@ -47,10 +47,10 @@ def rank_genes(
 
     Args:
         adata: AnnData object that contains the array to be sorted in `.var` or `.layer`.
-        arr_key: The key of the to-be-ranked array stored in `.var` or or `.layer`.
+        arr_key: The key of the to-be-ranked array stored in `.var` or `.layer`.
             If the array is found in `.var`, the `groups` argument will be ignored.
             If a numpy array is passed, it is used as the array to be ranked and must
-            be either an 1d array of length `.n_var`, or a `.n_obs`-by-`.n_var` 2d array.
+            be either a 1d array of length `.n_var`, or a `.n_obs`-by-`.n_var` 2d array.
         groups: Cell groups used to group the array.
         genes: The gene list that speed will be ranked. If provided, they must overlap the dynamics genes.
         abs: When pooling the values in the array (see below), whether to take the absolute values.
@@ -244,10 +244,10 @@ def rank_divergence_genes(
     **kwargs,
 ) -> pd.DataFrame:
     """Rank genes based on their diagonal Jacobian for each cell group.
-        Be aware that this 'divergence' refers to the diagonal elements of a gene-wise
-        Jacobian, rather than its trace, which is the common definition of the divergence.
 
-        Run .vf.jacobian and set store_in_adata=True before using this function.
+    Be aware that this 'divergence' refers to the diagonal elements of a gene-wise Jacobian, rather than its trace,
+    which is the common definition of the divergence. Run .vf.jacobian and set store_in_adata=True before using this
+    function.
 
     Args:
         adata: AnnData object that contains the reconstructed vector field in the `.uns` attribute.
@@ -308,10 +308,10 @@ def rank_s_divergence_genes(
     **kwargs,
 ) -> pd.DataFrame:
     """Rank genes based on their diagonal Sensitivity for each cell group.
-        Be aware that this 'divergence' refers to the diagonal elements of a gene-wise
-        Sensitivity, rather than its trace, which is the common definition of the divergence.
 
-        Run .vf.sensitivity and set store_in_adata=True before using this function.
+    Be aware that this 'divergence' refers to the diagonal elements of a gene-wise sensitivity, rather than its trace,
+    which is the common definition of the divergence. Run .vf.sensitivity and set store_in_adata=True before using this
+    function.
 
     Args:
         adata: AnnData object that contains the reconstructed vector field in the `.uns` attribute.
@@ -334,7 +334,7 @@ def rank_s_divergence_genes(
                 Whether output the values along with the rankings.
 
     Returns:
-        adata: AnnData object which has the rank dictionary for diagonal sensitivity in `.uns`.
+        AnnData object which has the rank dictionary for diagonal sensitivity in `.uns`.
     """
 
     if skey not in adata.uns_keys():
@@ -442,13 +442,13 @@ def rank_jacobian_genes(
 ) -> Optional[pd.DataFrame]:
     """Rank genes or gene-gene interactions based on their Jacobian elements for each cell group.
 
-        Run .vf.jacobian and set store_in_adata=True before using this function.
+    Run .vf.jacobian and set store_in_adata=True before using this function.
 
     Args:
         adata: AnnData object that contains the reconstructed vector field in the `.uns` attribute.
         groups: Cell groups used to group the Jacobians.
         jkey: The key of the stored Jacobians in `.uns`.
-        abs: Whether take the absolute value of the Jacobian.
+        abs: Whether to take the absolute value of the Jacobian.
         mode: {'full reg', 'full eff', 'reg', 'eff', 'int', 'switch'} (default: 'full_reg')
             The mode of ranking:
             (1) `'full reg'`: top regulators are ranked for each effector for each cell group;
@@ -463,8 +463,7 @@ def rank_jacobian_genes(
         kwargs: Keyword arguments passed to ranking functions.
 
     Returns:
-        rank_info:
-            different modes return different types of return values
+        Different modes return different types of return values
             1. full reg and full eff:
                 A pandas dataframe containing ranking info based on Jacobian elements
             2. reg eff int:
@@ -572,13 +571,13 @@ def rank_sensitivity_genes(
 ) -> pd.DataFrame:
     """Rank genes or gene-gene interactions based on their sensitivity elements for each cell group.
 
-        Run .vf.sensitivity and set store_in_adata=True before using this function.
+    Run .vf.sensitivity and set store_in_adata=True before using this function.
 
     Args:
         adata: AnnData object that contains the reconstructed vector field in the `.uns` attribute.
         groups: Cell groups used to group the sensitivity.
         skey: The key of the stored sensitivity in `.uns`.
-        abs: Whether or not to take the absolute value of the Jacobian.
+        abs: Whether to take the absolute value of the Jacobian.
         mode: {'full reg', 'full eff', 'reg', 'eff', 'int'} (default: 'full_reg')
             The mode of ranking:
             (1) `'full reg'`: top regulators are ranked for each effector for each cell group;
@@ -684,23 +683,23 @@ def aggregateRegEffs(
         data_dict: A dictionary corresponds to the Jacobian or sensitivity information, must be calculated with either:
             `dyn.vf.jacobian(adata, basis='pca', regulators=genes, effectors=genes)` or
             `dyn.vf.sensitivity(adata, basis='pca', regulators=genes, effectors=genes)`
-        reg_dict: A dictionary in which keys correspond to regulator-groups (i.e. TFs for specific cell type) while values
-            a list of genes that must have at least one overlapped genes with that from the Jacobian or sensitivity
-            dict.
-        eff_dict: A dictionary in which keys correspond to effector-groups (i.e. markers for specific cell type) while values
-            a list of genes that must have at least one overlapped genes with that from the Jacobian or sensitivity
-            dict.
+        reg_dict: A dictionary in which keys correspond to regulator-groups (i.e. TFs for specific cell type) while
+            values a list of genes that must have at least one overlapped genes with that from the Jacobian or
+            sensitivity dict.
+        eff_dict: A dictionary in which keys correspond to effector-groups (i.e. markers for specific cell type) while
+            values a list of genes that must have at least one overlapped genes with that from the Jacobian or
+            sensitivity dict.
         key: The key in .uns that corresponds to the Jacobian or sensitivity matrix information.
         basis: The embedding data in which the vector field was reconstructed. If `None`, use the vector field function
             that was reconstructed directly from the original unreduced gene expression space.
-        store_in_adata: hether to store the divergence result in adata.
+        store_in_adata: Whether to store the divergence result in adata.
 
 
     Returns:
         Depending on `store_in_adata`, it will either return a dictionary that include the aggregated Jacobian or
-            sensitivity information or the updated AnnData object that is updated with the `'aggregation'` key in the
-            `.uns`. This dictionary contains a 3-dimensional tensor with dimensions n_obs x n_regulators x n_effectors
-            as well as other information.
+        sensitivity information or the updated AnnData object that is updated with the `'aggregation'` key in the
+        `.uns`. This dictionary contains a 3-dimensional tensor with dimensions n_obs x n_regulators x n_effectors
+        as well as other information.
     """
 
     key_ = key if basis is None else key + "_" + basis

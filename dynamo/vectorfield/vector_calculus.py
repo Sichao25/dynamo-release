@@ -61,12 +61,12 @@ if use_dynode:
 def get_vf_class(adata: AnnData, basis: str = "pca") -> SvcVectorField:
     """Get the corresponding vector field class according to different methods.
 
-        Args:
-            adata: AnnData object that contains the reconstructed vector field in the `uns` attribute.
-            basis: The embedding data in which the vector field was reconstructed.
+    Args:
+        adata: AnnData object that contains the reconstructed vector field in the `uns` attribute.
+        basis: The embedding data in which the vector field was reconstructed.
 
-        Returns:
-            SvcVectorField object that is extracted from the `uns` attribute of adata.
+    Returns:
+        SvcVectorField object that is extracted from the `uns` attribute of adata.
     """
     vf_dict = get_vf_dict(adata, basis=basis)
     if "method" not in vf_dict.keys():
@@ -96,18 +96,19 @@ def velocities(
 
     Args:
         adata: AnnData object that contains the reconstructed vector field function in the `uns` attribute.
-        init_cells: Cell name or indices of the initial cell states for the historical or future cell state prediction with
-            numerical integration. If the names in init_cells are not found in the adata.obs_name, they will be treated as
-            cell indices and must be integers.
+        init_cells: Cell name or indices of the initial cell states for the historical or future cell state prediction
+            with numerical integration. If the names in init_cells are not found in the adata.obs_name, they will be
+            treated as cell indices and must be integers.
         init_states: Initial cell states for the historical or future cell state prediction with numerical integration.
         basis: The embedding data to use for calculating velocities. If `basis` is either `umap` or `pca`, the
             reconstructed trajectory will be projected back to high dimensional space via the `inverse_transform`
             function.
-        vector_field_class: If not None, the speed will be computed using this class instead of the vector field stored in adata. You
-            can set up the class with a known ODE function, useful when the data is generated through simulation.
-        layer: Which layer of the data will be used for predicting cell fate with the reconstructed vector field function.
-            The layer once provided, will override the `basis` argument and this function will then predict cell fate in high
-            dimensional space.
+        vector_field_class: If not None, the speed will be computed using this class instead of the vector field stored
+            in adata. You can set up the class with a known ODE function, useful when the data is generated through
+            simulation.
+        layer: Which layer of the data will be used for predicting cell fate with the reconstructed vector field
+            function. The layer once provided, will override the `basis` argument and this function will then predict
+            cell fate in high dimensional space.
         dims: The dimensions that will be selected for velocity calculation.
         Qkey: The key of the PCA loading matrix in `.uns`. Only used when basis is `pca`.
 
@@ -165,8 +166,9 @@ def speed(
     Args:
         adata: AnnData object that contains the reconstructed vector field function in the `uns` attribute.
         basis: The embedding data in which the vector field was reconstructed.
-        vector_field_class: If not None, the speed will be computed using this class instead of the vector field stored in adata. You
-            can set up the class with a known ODE function, useful when the data is generated through simulation.
+        vector_field_class: If not None, the speed will be computed using this class instead of the vector field stored
+            in adata. You can set up the class with a known ODE function, useful when the data is generated through
+            simulation.
         method: The method that will be used for calculating speed, either `analytical` or `numeric`. `analytical`
             method will use the analytical form of the reconstructed vector field for calculating Jacobian. Otherwise,
             raw velocity vectors are used.
@@ -235,13 +237,11 @@ def jacobian(
             `'analytical'` method uses the analytical expressions for calculating Jacobian while `'numerical'` method
             uses numdifftools, a numerical differentiation tool, for computing Jacobian. `'analytical'` method is much
             more efficient.
-        cores: Number of cores to calculate Jacobian. If cores is set to be > 1, multiprocessing will be used to
-            parallel the Jacobian calculation.
         kwargs: Any additional keys that will be passed to `elementwise_jacobian_transformation` function.
 
     Returns:
         AnnData object that is updated with the `'jacobian'` key in the `.uns`. This is a 3-dimensional tensor with
-            dimensions n_effectors x n_regulators x n_obs.
+        dimensions n_effectors x n_regulators x n_obs.
     """
 
     if vector_field_class is None:
@@ -384,7 +384,6 @@ def hessian(
             `'analytical'` method uses the analytical expressions for calculating Hessian while `'numerical'` method
             uses numdifftools, a numerical differentiation tool, for computing Hessian. `'analytical'` method is much
             more efficient.
-        cores: Number of cores to calculate Hessian. Currently note used.
         kwargs: Any additional keys that will be passed to elementwise_hessian_transformation function.
 
     Returns:
@@ -508,9 +507,9 @@ def laplacian(
 ):
     """Calculate Laplacian for each target gene in each cell with the reconstructed vector field.
 
-    If the vector field was reconstructed from the reduced PCA space, the Lapalacian matrix will then be inverse
+    If the vector field was reconstructed from the reduced PCA space, the Laplacian matrix will then be inverse
     transformed back to high dimension. Note that this should also be possible for reduced UMAP space and will be
-    supported shortly. Note we compute the Lapalacian for the RKHS kernel vector field analytically, which is much
+    supported shortly. Note we compute the Laplacian for the RKHS kernel vector field analytically, which is much
     more computationally efficient than the numerical method.
 
     Args:
@@ -518,7 +517,8 @@ def laplacian(
         basis: The embedding data in which the vector field was reconstructed. If `None`, use the vector field function
             that was reconstructed directly from the original unreduced gene expression space.
         Qkey: The key of the PCA loading matrix in `.uns`.
-        vector_field_class: If not `None`, the Hessian will be computed using this class instead of the vector field stored in adata.
+        vector_field_class: If not `None`, the Hessian will be computed using this class instead of the vector field
+            stored in adata.
         method: The method that will be used for calculating Laplacian, either `'analytical'` or `'numerical'`.
             `'analytical'` method uses the analytical expressions for calculating Laplacian while `'numerical'` method
             uses numdifftools, a numerical differentiation tool, for computing Laplacian. `'analytical'` method is much
@@ -527,8 +527,8 @@ def laplacian(
 
     Returns:
         AnnData object that is updated with the `'Laplacian'` key in the `.obs` and `obsm`. The first one is the
-            norm of the Laplacian for all target genes in a cell while the second one is the vector of Laplacian for all
-            target genes in each cell.
+        norm of the Laplacian for all target genes in a cell while the second one is the vector of Laplacian for all
+        target genes in each cell.
     """
 
     if hkey not in adata.uns_keys():
@@ -611,7 +611,8 @@ def sensitivity(
         basis: The embedding data in which the vector field was reconstructed. If `None`, use the vector field function
             that was reconstructed directly from the original unreduced gene expression space.
         Qkey: The key of the PCA loading matrix in `.uns`.
-        vector_field_class: If not `None`, the jacobian will be computed using this class instead of the vector field stored in adata.
+        vector_field_class: If not `None`, the jacobian will be computed using this class instead of the vector field
+            stored in adata.
         method: The method that will be used for calculating Jacobian, either `'analytical'` or `'numerical'`.
             `'analytical'` method uses the analytical expressions for calculating Jacobian while `'numerical'` method
             uses numdifftools, a numerical differentiation tool, for computing Jacobian. `'analytical'` method is much
@@ -621,15 +622,13 @@ def sensitivity(
                 (1) 'from_jacobian': first calculate jacobian matrix and then calculate sensitivity matrix. This method
                     will take the combined regulator + effectors gene set for calculating a square Jacobian matrix
                     required for the sensitivity matrix calculation.
-                (2) 'direct': The sensitivity matrix on low dimension will first calculated and then projected back to
+                (2) 'direct': The sensitivity matrix on low dimension will first be calculated and then projected back to
                     original gene expression space in a way that is similar to the gene-wise jacobian calculation.
-        cores: Number of cores to calculate Jacobian. If cores is set to be > 1, multiprocessing will be used to
-            parallel the Jacobian calculation.
         kwargs: Any additional keys that will be passed to elementwise_jacobian_transformation function.
 
     Returns:
-        adata: AnnData object that is updated with the `'sensitivity'` key in the `.uns`. This is a 3-dimensional tensor
-            with dimensions n_obs x n_regulators x n_effectors.
+        AnnData object that is updated with the `'sensitivity'` key in the `.uns`. This is a 3-dimensional tensor
+        with dimensions n_obs x n_regulators x n_effectors.
     """
 
     regulators, effectors = (
@@ -753,12 +752,16 @@ def acceleration(
     method: str = "analytical",
     **kwargs,
 ):
-    """Calculate acceleration for each cell with the reconstructed vector field function. AnnData object is updated with the `'acceleration'` key in the `.obs` as well as .obsm. If basis is `pca`, acceleration matrix will be inverse transformed back to original high dimension space.
+    """Calculate acceleration for each cell with the reconstructed vector field function.
+
+    AnnData object is updated with the `'acceleration'` key in the `.obs` as well as .obsm. If basis is `pca`,
+    acceleration matrix will be inverse transformed back to original high dimension space.
 
     Args:
         adata: AnnData object that contains the reconstructed vector field function in the `uns` attribute.
         basis: The embedding data in which the vector field was reconstructed.
-        vector_field_class: If not None, the divergene will be computed using this class instead of the vector field stored in adata.
+        vector_field_class: If not None, the divergence will be computed using this class instead of the vector field
+            stored in adata.
         Qkey: The key of the PCA loading matrix in `.uns`.
         method: The method that will be used for calculating acceleration field, either `'analytical'` or `'numerical'`.
             `'analytical'` method uses the analytical expressions for calculating acceleration field while `'numerical'`
@@ -809,14 +812,16 @@ def curvature(
     method: str = "analytical",
     **kwargs,
 ):
-    """Calculate curvature for each cell with the reconstructed vector field function. AnnData object that is updated with the `curvature` key in the `.obs`.
+    """Calculate curvature for each cell with the reconstructed vector field function. AnnData object that is updated
+    with the `curvature` key in the `.obs`.
 
     Args:
         adata: AnnData object that contains the reconstructed vector field function in the `uns` attribute.
         basis: The embedding data in which the vector field was reconstructed.
-        vector_field_class: If not None, the divergene will be computed using this class instead of the vector field stored in adata.
+        vector_field_class: If not None, the divergence will be computed using this class instead of the vector field
+            stored in adata.
         formula: Which formula of curvature will be used, there are two formulas, so formula can be either `{1, 2}`. By
-            default it is 2 and returns both the curvature vectors and the norm of the curvature. The formula one only
+            default, it is 2 and returns both the curvature vectors and the norm of the curvature. The formula one only
             gives the norm of the curvature.
         Qkey: The key of the PCA loading matrix in `.uns`.
         method: The method that will be used for calculating curvature field, either `'analytical'` or `'numerical'`.
@@ -864,29 +869,24 @@ def torsion(
     """Calculate torsion for each cell with the reconstructed vector field function. AnnData object that is updated with the `torsion` key in the .obs.
 
     Args:
-        adata: :class:`~anndata.AnnData`
-            AnnData object that contains the reconstructed vector field function in the `uns` attribute.
-        basis: str or None (default: `umap`)
-            The embedding data in which the vector field was reconstructed.
-        vector_field_class: dict
-            The true ODE function, useful when the data is generated through simulation.
-        kwargs:
-            Any additional keys that will be passed to vector_field_class.compute_torsion function.
+        adata: AnnData object that contains the reconstructed vector field function in the `uns` attribute.
+        basis: The embedding data in which the vector field was reconstructed.
+        vector_field_class: The true ODE function, useful when the data is generated through simulation.
+        kwargs: Any additional keys that will be passed to vector_field_class.compute_torsion function.
 
-    Examples
-    --------
-    >>> adata = dyn.sample_data.hematopoiesis()
-    >>> dyn.tl.reduceDimension(adata, n_components=3, enforce=True, embedding_key='X_umap_3d')
-    >>> adata
-    >>> dyn.tl.cell_velocities(adata,
-    >>>                        X=adata.layers["M_t"],
-    >>>                        V=adata.layers["velocity_alpha_minus_gamma_s"],
-    >>>                        basis='umap_3d',
-    >>>                        )
-    >>> dyn.vf.VectorField(adata, basis='umap_3d')
-    >>> dyn.vf.torsion(adata, basis='umap_3d')
-    >>> dyn.pl.streamline_plot(adata, color='torsion_umap_3d', basis='umap_3d')
-    >>> dyn.pl.streamline_plot(adata, color='torsion_umap_3d')
+    Examples:
+        >>> adata = dyn.sample_data.hematopoiesis()
+        >>> dyn.tl.reduceDimension(adata, n_components=3, enforce=True, embedding_key='X_umap_3d')
+        >>> adata
+        >>> dyn.tl.cell_velocities(adata,
+        >>>                        X=adata.layers["M_t"],
+        >>>                        V=adata.layers["velocity_alpha_minus_gamma_s"],
+        >>>                        basis='umap_3d',
+        >>>                        )
+        >>> dyn.vf.VectorField(adata, basis='umap_3d')
+        >>> dyn.vf.torsion(adata, basis='umap_3d')
+        >>> dyn.pl.streamline_plot(adata, color='torsion_umap_3d', basis='umap_3d')
+        >>> dyn.pl.streamline_plot(adata, color='torsion_umap_3d')
     """
 
     if vector_field_class is None:
@@ -909,13 +909,17 @@ def curl(
     method: str = "analytical",
     **kwargs,
 ):
-    """Calculate Curl for each cell with the reconstructed vector field function. AnnData object is updated with the `'curl'` information in the `.
-    obs`. When vector field has three dimension, adata.obs['curl'] (magnitude of curl) and adata.obsm['curl'] (curl vector) will be added; when vector field has two dimension, only adata.obs['curl'] (magnitude of curl) will be provided.
+    """Calculate Curl for each cell with the reconstructed vector field function.
+
+    AnnData object is updated with the `'curl'` information in the `.obs`. When vector field has three dimension,
+    adata.obs['curl'] (magnitude of curl) and adata.obsm['curl'] (curl vector) will be added; when vector field has two
+    dimension, only adata.obs['curl'] (magnitude of curl) will be provided.
 
     Args:
         adata: AnnData object that contains the reconstructed vector field function in the `uns` attribute.
         basis: The embedding data in which the vector field was reconstructed.
-        vector_field_class: If not None, the divergene will be computed using this class instead of the vector field stored in adata.
+        vector_field_class: If not None, the divergence will be computed using this class instead of the vector field
+            stored in adata.
         method: The method that will be used for calculating curl, either `analytical` or `numeric`. `analytical`
             method will use the analytical form of the reconstructed vector field for calculating curl while
             `numeric` method will use numdifftools for calculation. `analytical` method is much more efficient.
@@ -948,7 +952,8 @@ def divergence(
     store_in_adata: bool = True,
     **kwargs,
 ) -> Optional[np.ndarray]:
-    """Calculate divergence for each cell with the reconstructed vector field function. Either AnnData object is updated with the `'divergence'` key in the `.obs` or the divergence is returned as a numpy array.
+    """Calculate divergence for each cell with the reconstructed vector field function. Either AnnData object is updated
+    with the `'divergence'` key in the `.obs` or the divergence is returned as a numpy array.
 
     Args:
         adata: AnnData object that contains the reconstructed vector field function in the `uns` attribute.
@@ -958,7 +963,8 @@ def divergence(
             If `None`, all cells are used.
         sample_ncells: The number of cells to be sampled. If `sampling` is None, this parameter is ignored.
         basis: The embedding data in which the vector field was reconstructed.
-        vector_field_class: If not None, the divergene will be computed using this class instead of the vector field stored in adata.
+        vector_field_class: If not None, the divergence will be computed using this class instead of the vector field
+            stored in adata.
         method: The method that will be used for calculating divergence, either `analytical` or `numeric`. `analytical`
             method will use the analytical form of the reconstructed vector field for calculating divergence while
             `numeric` method will use numdifftools for calculation. `analytical` method is much more efficient.
@@ -966,7 +972,7 @@ def divergence(
         kwargs: Any additional keys that will be passed to vector_field_class.compute_divergence function.
 
     Returns:
-        the divergence is returned as an np.ndarray if store_in_adata is False.
+        The divergence is returned as a np.ndarray if store_in_adata is False.
     """
 
     if vector_field_class is None:

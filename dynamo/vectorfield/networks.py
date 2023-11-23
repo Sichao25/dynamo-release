@@ -89,13 +89,13 @@ def build_network_per_cluster(
     Args:
         adata: AnnData object, must at least have gene-wise Jacobian matrix calculated for each or selected cell.
         cluster: The group key that points to the columns of `adata.obs`.
-        cluster_names: The groups whose networks will be constructed, must overlap with names in adata.obs and / or keys from the
-            ranking dictionaries.
-        full_reg_rank: The dictionary stores the regulator ranking information per cluster based on cell-wise Jacobian matrix. If
-            None, we will call `rank_jacobian_genes(adata, groups=cluster, mode='full reg', abs=True,
+        cluster_names: The groups whose networks will be constructed, must overlap with names in adata.obs and / or keys
+            from the ranking dictionaries.
+        full_reg_rank: The dictionary stores the regulator ranking information per cluster based on cell-wise Jacobian
+            matrix. If None, we will call `rank_jacobian_genes(adata, groups=cluster, mode='full reg', abs=True,
             output_values=True)` to first obtain this dictionary.
-        full_eff_rank: The dictionary stores the effector ranking information per cluster based on cell-wise Jacobian matrix. If
-            None, we will call `rank_jacobian_genes(adata, , groups=cluster, mode='full eff', abs=True,
+        full_eff_rank: The dictionary stores the effector ranking information per cluster based on cell-wise Jacobian
+            matrix. If None, we will call `rank_jacobian_genes(adata, , groups=cluster, mode='full eff', abs=True,
             output_values=True)` to first obtain this dictionary.
         genes: The list of input genes, from which the network will be constructed.
         n_top_genes: Number of top genes that will be selected from to build the network.
@@ -178,7 +178,7 @@ def adj_list_to_matrix(
 
     Args:
         adj_list: A pandas adjacency dataframe with regulator, target, weight columns for representing a network graph.
-        only_one_edge: Whether or not to only keep the edges with higher weight for any two gene pair.
+        only_one_edge: Whether to only keep the edges with higher weight for any two gene pair.
         clr: Whether to post-process the direct network via the context likelihood relatedness.
         graph: Whether a direct, weighted graph based on networkx should be returned.
 

@@ -55,20 +55,21 @@ def cluster_field(
     Args:
         adata: adata object that includes both newly synthesized and total gene expression of cells. Alternatively,
             the object should include both unspliced and spliced gene expression of cells.
-        basis: The space that will be used for calculating vector field features. Valid names includes, for example, `pca`,
-            `umap`, etc.
+        basis: The space that will be used for calculating vector field features. Valid names includes, for example,
+            `pca`, `umap`, etc.
         features: features have to be selected from ['speed', 'potential', 'divergence', 'acceleration', 'curvature', 'curl']
         add_embedding_basis: Whether to add the embedding basis to the feature space for clustering.
         embedding_basis: The embedding basis that will be combined with the vector field feature space for clustering.
         normalize: Whether to mean center and scale the feature across all cells.
-        method: The method that will be used for clustering, one of `{'kmeans'', 'hdbscan', 'louvain', 'leiden'}`. If `louvain`
-            or `leiden` used, you need to have `cdlib` installed.
+        method: The method that will be used for clustering, one of `{'kmeans'', 'hdbscan', 'louvain', 'leiden'}`. If
+            `louvain` or `leiden` used, you need to have `cdlib` installed.
         cores: The number of parallel jobs to run for neighbors search. ``None`` means 1 unless in a
             :obj:`joblib.parallel_backend` context.
             ``-1`` means using all processors.
         copy: Whether to return a new deep copy of `adata` instead of updating `adata` object passed in arguments.
         resolution: Clustering resolution, higher values yield more fine-grained clusters.
-        kwargs: Any additional arguments that will be passed to either kmeans, hdbscan, louvain or leiden clustering algorithms.
+        kwargs: Any additional arguments that will be passed to either kmeans, hdbscan, louvain or leiden clustering
+            algorithms.
 
     Returns:
         Either updates `adata` or directly returns a new `adata` object if `copy` is `True`.
@@ -205,13 +206,16 @@ def streamline_clusters(
     Args:
         adata: An AnnData object representing the network to be analyzed.
         basis: The basis to use for creating the vector field, either "umap" or "tsne". Defaults to "umap".
-        features: A list of features to calculate for each point in the vector field. Defaults to ["speed", "divergence", "acceleration", "curvature", "curl"].
-        method: The method to use for calculating the flow of data through the grid, either "sparsevfc" or "gaussian". Defaults to "sparsevfc".
+        features: A list of features to calculate for each point in the vector field. Defaults to ["speed",
+            "divergence", "acceleration", "curvature", "curl"].
+        method: The method to use for calculating the flow of data through the grid, either "sparsevfc" or "gaussian".
+            Defaults to "sparsevfc".
         xy_grid_nums: The number of points to use in the x and y dimensions of the grid. Defaults to [50, 50].
         density: The density of the grid. Defaults to 5.
         curvature_method: The method to use for calculating curvature. Defaults to 1.
         feature_bins: The number of bins to use for discretizing the data. Defaults to 10.
-        clustering_method: The method to use for clustering the data into modules, either "louvain" or "leiden". Defaults to "leiden".
+        clustering_method: The method to use for clustering the data into modules, either "louvain" or "leiden".
+            Defaults to "leiden".
         assign_fixedpoints: A boolean indicating whether to assign fixed points to the data. Defaults to False.
         reversed_fixedpoints: A boolean indicating whether to reverse the fixed points assignment. Defaults to False.
 
