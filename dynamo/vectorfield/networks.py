@@ -211,8 +211,15 @@ def adj_list_to_matrix(
         return adj_matrix
 
 
-def clr_directed(adj_mat):
-    """clr on directed graph"""
+def clr_directed(adj_mat: pd.DataFrame) -> pd.DataFrame:
+    """Post-process the direct network via the context likelihood relatedness.
+
+    Args:
+        adj_mat: A pandas adjacency matrix for representing a network graph.
+
+    Returns:
+        A pandas adjacency matrix after the post-processing.
+    """
     col_means = adj_mat.mean(axis=0)
     col_sd = adj_mat.std(axis=0)
     col_sd[col_sd == 0] = -1e-4

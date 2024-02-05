@@ -189,10 +189,10 @@ def diffusionMatrix2D(V_mat: np.ndarray) -> np.ndarray:
     This function works for two dimension. See :func:`diffusionMatrix` for generalization to arbitrary dimensions.
 
     Args:
-        V_mat: velocity vectors of neighbors
+        V_mat: Velocity vectors of neighbors.
 
     Returns:
-        Return the cell-specific diffusion matrix
+        Return the cell-specific diffusion matrix.
 
     See also:: :func:`diffusionMatrix`
     """

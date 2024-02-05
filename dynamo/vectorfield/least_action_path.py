@@ -8,13 +8,13 @@ def action(path: np.ndarray, vf_func: Callable, D=1, dt=1) -> float:
     """Compute the action of a path by taking the sum of the squared distance between the path and the vector field and dividing by twice the diffusion constant. Conceptually, the action represents deviations from the streamline of the vector field. Reference Box 3 in the publication for more information.
 
     Args:
-        path: sequence of points in the state space collectively representing the path of interest
-        vf_func: function that takes a point in the state space and returns the vector field at that point
+        path: Sequence of points in the state space collectively representing the path of interest.
+        vf_func: Function that takes a point in the state space and returns the vector field at that point.
         D: Diffusion constant, Defaults to 1.
         dt: Time step for moving from one state to another within the path, Defaults to 1.
 
     Returns:
-        the action of the path
+        The action of the path.
     """
     # centers
     x = (path[:-1] + path[1:]) * 0.5
@@ -26,13 +26,34 @@ def action(path: np.ndarray, vf_func: Callable, D=1, dt=1) -> float:
     return s
 
 
-def action_aux(path_flatten, vf_func, dim, start=None, end=None, **kwargs):
+def action_aux(
+    path_flatten: np.ndarray,
+    vf_func: Callable,
+    dim: int,
+    start: Optional[np.ndarray] = None,
+    end: Optional[np.ndarray] = None,
+    **kwargs,
+):
+    """Auxiliary function for computing the action of a path.
+
+    Args:
+        path_flatten: Sequence of points in the state space collectively representing the path of interest.
+        vf_func: Function that takes a point in the state space and returns the vector field at that point.
+        dim: Dimension of the state space.
+        start: The starting point for the path, Defaults to None.
+        end: The ending point for the path, Defaults to None.
+        **kwargs: Additional keyword arguments to pass to the action function.
+
+    Returns:
+        The action of the path.
+    """
     path = reshape_path(path_flatten, dim, start=start, end=end)
     return action(path, vf_func, **kwargs)
 
 
 def action_grad(path: np.ndarray, vf_func: Callable, jac_func: Callable, D: float = 1, dt: float = 1) -> np.ndarray:
-    """Compute the gradient of the action with respect to each component of each point in the path using the analytical Jacobian.
+    """Compute the gradient of the action with respect to each component of each point in the path using the analytical
+    Jacobian.
 
     Args:
         path: sequence of points in the state space collectively representing the path of interest
@@ -56,12 +77,51 @@ def action_grad(path: np.ndarray, vf_func: Callable, jac_func: Callable, D: floa
     return grad
 
 
-def action_grad_aux(path_flatten, vf_func, jac_func, dim, start=None, end=None, **kwargs):
+def action_grad_aux(
+    path_flatten: np.ndarray,
+    vf_func: Callable,
+    jac_func: Callable,
+    dim: int,
+    start: Optional[np.ndarray] = None,
+    end: Optional[np.ndarray] = None,
+    **kwargs,
+):
+    """Auxiliary function for computing the gradient of the action with respect to each component of each point in the
+    path using the analytical Jacobian.
+
+    Args:
+        path_flatten: Sequence of points in the state space collectively representing the path of interest.
+        vf_func: Function that takes a point in the state space and returns the vector field at that point.
+        jac_func: Function for computing Jacobian given cell state.
+        dim: Dimension of the state space.
+        start: The starting point for the path, Defaults to None.
+        end: The ending point for the path, Defaults to None.
+        **kwargs: Additional keyword arguments to pass to the action_grad function.
+
+    Returns:
+        Gradient of the action with respect to each component of each point in the path.
+    """
     path = reshape_path(path_flatten, dim, start=start, end=end)
     return action_grad(path, vf_func, jac_func, **kwargs).flatten()
 
 
-def reshape_path(path_flatten, dim, start=None, end=None):
+def reshape_path(
+    path_flatten: np.ndarray,
+    dim: int,
+    start: Optional[np.ndarray] = None,
+    end: Optional[np.ndarray] = None,
+):
+    """Reshape a flattened path with given dimensio..
+
+    Args:
+        path_flatten: Flattened path.
+        dim: Dimension of the state space.
+        start: The starting point for the path, Defaults to None.
+        end: The ending point for the path, Defaults to None.
+
+    Returns:
+        The reshaped path.
+    """
     path = path_flatten.reshape(int(len(path_flatten) / dim), dim)
     if start is not None:
         path = np.vstack((start, path))

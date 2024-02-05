@@ -1,11 +1,19 @@
 # code adapted from answer 2 by e-malito
 # https://stackoverflow.com/questions/43150872/number-of-arrowheads-on-matplotlib-streamplot
+from typing import List, Optional, Tuple
 
 import numpy as np
 
 
-def curve_coord(line=None):
-    """return curvilinear coordinate"""
+def curve_coord(line: Optional[np.ndarray] = None) -> np.ndarray:
+    """Calculate the curvilinear coordinate.
+
+    Args:
+        line: A 2D array of shape (n, 2) representing the coordinates of the line.
+
+    Returns:
+        The curvilinear coordinate.
+    """
     x = line[:, 0]
     y = line[:, 1]
     s = np.zeros(x.shape)
@@ -14,8 +22,21 @@ def curve_coord(line=None):
     return s
 
 
-def curve_extract(line, spacing, offset=None):
-    """Extract points at equidistant space along a curve"""
+def curve_extract(
+    line: np.ndarray,
+    spacing: float,
+    offset: Optional[float] = None,
+) -> np.ndarray:
+    """Extract points at equidistant space along a curve.
+
+    Args:
+        line: A 2D array of shape (n, 2) representing the coordinates of the line.
+        spacing: The spacing between the points.
+        offset: The offset from the start of the line. Defaults to None.
+
+    Returns:
+        The extracted points.
+    """
     x = line[:, 0]
     y = line[:, 1]
     if offset is None:
@@ -31,8 +52,15 @@ def curve_extract(line, spacing, offset=None):
     return np.array([xx, yy]).T
 
 
-def seg_to_lines(seg):
-    """Convert a list of segments to a list of lines"""
+def seg_to_lines(seg: List[np.ndarray]):
+    """Convert a list of segments to a list of lines.
+
+    Args:
+        seg: A list of segments.
+
+    Returns:
+        A list of lines.
+    """
 
     def extract_continuous(i):
         x = []
@@ -74,11 +102,25 @@ def seg_to_lines(seg):
     return lines
 
 
-def lines_to_arrows(lines, n=5, spacing=None, normalize=True):
-    """Extract "streamlines" arrows from a set of lines
-    Either: `n` arrows per line
-        or an arrow every `spacing` distance
-    If `normalize` is true, the arrows have a unit length
+def lines_to_arrows(
+    lines: List[np.ndarray],
+    n: int = 5,
+    spacing: Optional[float] = None,
+    normalize: bool = True,
+) -> Tuple:
+    """Extract "streamlines" arrows from a set of lines.
+
+    Either `n` arrows per line or an arrow every `spacing` distance. If `normalize` is true, the arrows have a unit
+    length.
+
+    Args:
+        lines: A list of lines.
+        n: The number of arrows per line. Defaults to 5.
+        spacing: The spacing between the arrows. Defaults to None.
+        normalize: Whether to normalize the arrows. Defaults to True.
+
+    Returns:
+        The arrows.
     """
     if spacing is None:
         # if n is provided we estimate the spacing based on each curve lenght)

@@ -19,20 +19,37 @@ class FixedPoints:
         integers indicating the stability of each fixed point (-1 for stable, 0 for saddle, and 1 for unstable).
 
         Args:
-            X: array of fixed points. Defaults to None.
-            J: array of associated jacobians. Defaults to None.
+            X: Array of fixed points. Defaults to None.
+            J: Array of associated jacobians. Defaults to None.
         """
         self.X = X if X is not None else []
         self.J = J if J is not None else []
         self.eigvals = []
 
     def get_X(self) -> np.ndarray:
+        """Get the array of fixed points.
+
+        Returns:
+            The array of fixed points.
+        """
         return np.array(self.X)
 
     def get_J(self) -> np.ndarray:
+        """Get the array of Jacobian matrices.
+
+        Returns:
+            The array of Jacobian matrices.
+        """
         return np.array(self.J)
 
     def add_fixed_points(self, X: np.ndarray, J: np.ndarray, tol_redundant: float = 1e-4) -> None:
+        """Add fixed points and their corresponding Jacobian matrices to the object.
+
+        Args:
+            X: Array of fixed points.
+            J: Array of associated Jacobian matrices.
+            tol_redundant: Tolerance for determining redundant fixed points. Defaults to 1e-4.
+        """
         for i, x in enumerate(X):
             redundant = False
             if tol_redundant is not None and len(self.X) > 0:
@@ -44,6 +61,7 @@ class FixedPoints:
                 self.J.append(J[i])
 
     def compute_eigvals(self) -> None:
+        """Compute the eigenvalues of the Jacobian matrices and store them in the eigvals attribute."""
         self.eigvals = []
         for i in range(len(self.J)):
             if self.J[i] is None or np.isnan(self.J[i]).any():
@@ -53,6 +71,11 @@ class FixedPoints:
             self.eigvals.append(w)
 
     def is_stable(self) -> np.ndarray:
+        """Determine whether the fixed points are stable.
+
+        Returns:
+            A boolean array indicating whether each fixed point is stable.
+        """
         if len(self.eigvals) != len(self.X):
             self.compute_eigvals()
 
@@ -66,6 +89,11 @@ class FixedPoints:
         return stable
 
     def is_saddle(self) -> Tuple[np.ndarray, np.ndarray]:
+        """Determine whether the fixed points are saddle points.
+
+        Returns:
+            A boolean array indicating whether each fixed point is a saddle point.
+        """
         is_stable = self.is_stable()
         saddle = np.zeros(len(self.eigvals), dtype=bool)
         for i, w in enumerate(self.eigvals):
@@ -77,6 +105,11 @@ class FixedPoints:
         return saddle, is_stable
 
     def get_fixed_point_types(self) -> np.ndarray:
+        """Get the stability of the fixed points.
+
+        Returns:
+            An array of integers indicating the type of each fixed point.
+        """
         is_saddle, is_stable = self.is_saddle()
         # -1 -- stable, 0 -- saddle, 1 -- unstable
         ftype = np.ones(len(self.X))

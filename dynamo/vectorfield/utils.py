@@ -24,6 +24,15 @@ else:
 
 
 class NormDict(TypedDict):
+    """A dictionary containing the normalization information.
+
+    Attributes:
+        xm: The mean of the x data.
+        ym: The mean of the x + v data.
+        xscale: The scale of the x data.
+        yscale: The scale of the x + v data.
+        fix_velocity: Whether the velocity is fixed.
+    """
     xm: np.ndarray
     ym: np.ndarray
     xscale: float
@@ -32,6 +41,27 @@ class NormDict(TypedDict):
 
 
 class VecFldDict(TypedDict):
+    """A dictionary containing the parameters necessary for vector field reconstruction and the vector field function.
+
+    Attributes:
+        X: Current state.
+        valid_ind: The indices of cells that have finite velocity values.
+        X_ctrl: Sample control points of current state.
+        ctrl_idx: Indices for the sampled control points.
+        Y: Velocity estimates in delta t.
+        beta: Parameter of the Gaussian Kernel for the kernel matrix (Gram matrix).
+        V: Prediction of velocity of X.
+        C: Finite set of the coefficients for the
+        P: Posterior probability Matrix of inliers.
+        VFCIndex: Indexes of inliers found by sparseVFC.
+        sigma2: Energy change rate.
+        grid: Grid of current state.
+        grid_V: Prediction of velocity of the grid.
+        iteration: Number of the last iteration.
+        tecr_traj: Vector of relative energy changes rate comparing to previous step.
+        E_traj: Vector of energy at each iteration.
+        norm_dict: A dictionary containing the normalization information.
+    """
     X: np.ndarray
     valid_ind: float
     X_ctrl: np.ndarray
@@ -52,17 +82,42 @@ class VecFldDict(TypedDict):
 
 
 def is_outside_domain(x: np.ndarray, domain: Tuple[float, float]) -> np.ndarray:
+    """Check if the input data is outside the domain.
+
+    Args:
+        x: The input data.
+        domain: The domain to perform the check.
+
+    Returns:
+        A boolean array indicating whether each data point is outside the domain.
+    """
     x = x[None, :] if x.ndim == 1 else x
     return np.any(np.logical_or(x < domain[0], x > domain[1]), axis=1)
 
 
 def grad(f: Callable, x: np.ndarray) -> nd.Gradient:
-    """Gradient of scalar-valued function f evaluated at x"""
+    """Gradient of scalar-valued function f evaluated at x.
+
+    Args:
+        f: The function to calculate the gradient.
+        x: The input data.
+
+    Returns:
+        The gradient of the function.
+    """
     return nd.Gradient(f)(x)
 
 
 def laplacian(f: Callable, x: np.ndarray) -> float:
-    """Laplacian of scalar field f evaluated at x"""
+    """Laplacian of scalar field f evaluated at x.
+
+    Args:
+        f: The function to calculate the laplacian.
+        x: The input data.
+
+    Returns:
+        The laplacian of the function.
+    """
     hes = nd.Hessdiag(f)(x)
     return sum(hes)
 
@@ -82,8 +137,8 @@ def vector_field_function(
     Reference: Regularized vector field learning with sparse approximation for mismatch removal, Ma, Jiayi, etc. al, Pattern Recognition
 
     Args:
-        x: Set of cell expression state samples
-        vf_dict: VecFldDict with stored parameters necessary for reconstruction
+        x: Set of cell expression state samples.
+        vf_dict: VecFldDict with stored parameters necessary for reconstruction.
         dim: Index or indices of dimensions of the K gram matrix to return. Defaults to None.
         kernel: one of {"full", "df_kernel", "cf_kernel"}. Defaults to "full".
         X_ctrl_ind: Indices of control points at which kernels will be centered. Defaults to None.
@@ -92,7 +147,8 @@ def vector_field_function(
         ValueError: If the kernel value specified is not one of "full", "df_kernel", or "cf_kernel"
 
     Returns:
-        np.ndarray storing the `dim` dimensions of m x m gram matrix K storing the kernel evaluated at each pair of control points
+        Array storing the `dim` dimensions of m x m gram matrix K storing the kernel evaluated at each pair of control
+        points.
     """
     # x=np.array(x).reshape((1, -1))
     if "div_cur_free_kernels" in vf_dict.keys():
@@ -145,6 +201,17 @@ def vector_field_function(
 def dynode_vector_field_function(
     x: np.ndarray, vf_dict: VecFldDict, dim: Optional[Union[int, np.ndarray]] = None, **kwargs
 ) -> np.ndarray:
+    """vector field function constructed by dynode.
+
+    Args:
+        x: Set of cell expression state samples.
+        vf_dict: VecFldDict with stored parameters necessary for reconstruction.
+        dim: Index or indices of dimensions of the K gram matrix to return. Defaults to None.
+
+    Returns:
+        Array storing the `dim` dimensions of m x m gram matrix K storing the kernel evaluated at each pair of control
+        points.
+    """
     # try:
     #     import dynode
     #     from dynode.vectorfield import Dynode
@@ -270,15 +337,15 @@ def get_vf_dict(adata: AnnData, basis: str = "", vf_key: str = "VecFld") -> VecF
     """Get vector field dictionary from the `.uns` attribute of the AnnData object.
 
     Args:
-        adata: `AnnData` object
-        basis: string indicating the embedding data to use for calculating velocities. Defaults to "".
+        adata: `AnnData` object.
+        basis: String indicating the embedding data to use for calculating velocities. Defaults to "".
         vf_key: _description_. Defaults to "VecFld".
 
     Raises:
         ValueError: if vf_key or vfkey_basis is not included in the adata object.
 
     Returns:
-        vector field dictionary
+        The vector field dictionary.
     """
     if basis is not None:
         if len(basis) > 0:
@@ -358,8 +425,8 @@ def Jacobian_rkhs_gaussian(x: np.ndarray, vf_dict: VecFldDict, vectorize: bool =
         Essential keys: 'X_ctrl', 'beta', 'C'
 
     Returns:
-        Jacobian matrices stored as d-by-d-by-n numpy arrays evaluated at x.
-            d is the number of dimensions and n the number of coordinates in x.
+        Jacobian matrices stored as d-by-d-by-n numpy arrays evaluated at x. d is the number of dimensions and n the
+        number of coordinates in x.
     """
     if x.ndim == 1:
         K, D = con_K(x[None, :], vf_dict["X_ctrl"], vf_dict["beta"], return_d=True)
@@ -379,7 +446,23 @@ def Jacobian_rkhs_gaussian(x: np.ndarray, vf_dict: VecFldDict, vectorize: bool =
     return -2 * vf_dict["beta"] * J
 
 
-def Jacobian_rkhs_gaussian_parallel(x: np.ndarray, vf_dict: VecFldDict, cores: Optional[int] = None) -> np.ndarray:
+def Jacobian_rkhs_gaussian_parallel(
+    x: np.ndarray,
+    vf_dict: VecFldDict,
+    cores: Optional[int] = None,
+) -> np.ndarray:
+    """Parallel version of the analytical Jacobian for RKHS vector field functions with Gaussian kernel.
+
+    Args:
+        x: Coordinates where the Jacobian is evaluated.
+        vf_dict: A dictionary containing RKHS vector field control points, Gaussian bandwidth,
+            and RKHS coefficients.
+        cores: Number of cores to use for parallel computation. Defaults to None.
+
+    Returns:
+        Jacobian matrices stored as d-by-d-by-n numpy arrays evaluated at x. d is the number of dimensions and n the
+        number of coordinates in x.
+    """
     n = len(x)
     if cores is None:
         cores = mp.cpu_count()
@@ -397,8 +480,8 @@ def Jacobian_rkhs_gaussian_parallel(x: np.ndarray, vf_dict: VecFldDict, cores: O
 
 
 def Jacobian_numerical(f: Callable, input_vector_convention: str = "row") -> Union[Callable, nd.Jacobian]:
-    """
-    Get the numerical Jacobian of the vector field function.
+    """Get the numerical Jacobian of the vector field function.
+
     If the input_vector_convention is 'row', it means that fjac takes row vectors
     as input, otherwise the input should be an array of column vectors. Note that
     the returned Jacobian would behave exactly the same if the input is an 1d array.
@@ -413,6 +496,13 @@ def Jacobian_numerical(f: Callable, input_vector_convention: str = "row") -> Uni
             df_2/dx_1   df_2/dx_2   df_2/dx_3   ...
             df_3/dx_1   df_3/dx_2   df_3/dx_3   ...
             ...         ...         ...         ...
+
+    Args:
+        f: The vector field function.
+        input_vector_convention: The convention of the input vector. Defaults to "row".
+
+    Returns:
+        The numerical Jacobian of the vector field function.
     """
     fjac = nd.Jacobian(lambda x: f(x.T).T)
     if input_vector_convention == "row" or input_vector_convention == 0:
@@ -542,6 +632,19 @@ def subset_jacobian_transformation(Js: np.ndarray, Qi: np.ndarray, Qj: np.ndarra
 
 
 def transform_jacobian(Js: np.ndarray, Qi: np.ndarray, Qj: np.ndarray, pbar=False) -> np.ndarray:
+    """Transform Jacobian matrix (:math:`\partial F_i / \partial x_j`) from PCA space to the original space.
+
+    Args:
+        Js: Original (k x k) dimension Jacobian matrix.
+        Qi: PCA loading matrix with dimension n' x n_PCs of the effector genes, from which local dimension Jacobian
+            matrix (k x k).
+        Qj: PCs loading matrix with dimension n' x n_PCs of the regulator genes, from which local dimension Jacobian
+            matrix (k x k).
+        pbar: Whether to show the progress bar. Defaults to False.
+
+    Returns:
+        The calculated Jacobian matrix (n_gene x n_gene x n_obs) for each cell.
+    """
     d1, d2, n = Qi.shape[0], Qj.shape[0], Js.shape[2]
     ret = np.zeros((d1, d2, n), dtype=np.float32)
     if pbar:
@@ -555,8 +658,8 @@ def transform_jacobian(Js: np.ndarray, Qi: np.ndarray, Qj: np.ndarray, pbar=Fals
 
 
 def average_jacobian_by_group(Js: np.ndarray, group_labels: List[str]) -> Dict[str, np.ndarray]:
-    """
-    Returns a dictionary of averaged jacobians with group names as the keys.
+    """Returns a dictionary of averaged jacobians with group names as the keys.
+
     No vectorized indexing was used due to its high memory cost.
 
     Args:
@@ -596,8 +699,7 @@ def Hessian_rkhs_gaussian(x: np.ndarray, vf_dict: VecFldDict) -> np.ndarray:
             Essential keys: 'X_ctrl', 'beta', 'C'
 
     Returns:
-        H: Hessian matrix stored as d-by-d-by-d numpy arrays evaluated at x.
-            d is the number of dimensions.
+        Hessian matrix stored as d-by-d-by-d numpy arrays evaluated at x. d is the number of dimensions.
     """
     x = np.atleast_2d(x)
 
@@ -630,7 +732,7 @@ def hessian_transformation(H: np.ndarray, qi: np.ndarray, Qj: np.ndarray, Qk: np
         Qk: The submatrix of the PC loading matrix Q with dimension d x k, corresponding to co-regulators k.
 
     Returns:
-        h: The calculated Hessian matrix for the effector i w.r.t regulators j and co-regulators k.
+        The calculated Hessian matrix for the effector i w.r.t regulators j and co-regulators k.
     """
 
     h = np.einsum("ijk, di -> djk", H, qi)
@@ -655,7 +757,7 @@ def elementwise_hessian_transformation(H: np.ndarray, qi: np.ndarray, qj: np.nda
         qk: The k-th row of the PC loading matrix Q with dimension d x k, corresponding to the co-regulator k.
 
     Returns:
-        h: The calculated Hessian elements for each cell.
+        The calculated Hessian elements for each cell.
     """
 
     h = np.einsum("ijk, i -> jk", H, qi)
@@ -666,11 +768,12 @@ def elementwise_hessian_transformation(H: np.ndarray, qi: np.ndarray, qj: np.nda
 
 # ---------------------------------------------------------------------------------------------------
 def Laplacian(H: np.ndarray) -> np.ndarray:
-    """
-    Computes the Laplacian of the Hessian matrix by summing the diagonal elements of the Hessian matrix (summing the unmixed second partial derivatives)
-                                            :math: `\Delta f = \sum_{i=1}^{n} \frac{\partial^2 f}{\partial x_i^2}`
+    """Computes the Laplacian of the Hessian matrix by summing the diagonal elements of the Hessian matrix (summing the
+    unmixed second partial derivatives)
+        :math: `\Delta f = \sum_{i=1}^{n} \frac{\partial^2 f}{\partial x_i^2}`
+
     Args:
-        H: Hessian matrix
+        Hessian matrix
     """
     # when H has four dimensions, H is calculated across all cells
     if H.ndim == 4:
@@ -690,7 +793,15 @@ def Laplacian(H: np.ndarray) -> np.ndarray:
 # ---------------------------------------------------------------------------------------------------
 # dynamical properties
 def _divergence(f: Callable, x: np.ndarray) -> float:
-    """Divergence of the reconstructed vector field function f evaluated at x"""
+    """Divergence of the reconstructed vector field function f evaluated at x.
+
+    Args:
+        f: The vector field function.
+        x: The coordinates where the divergence is evaluated.
+
+    Returns:
+        The divergence of the vector field function evaluated at x.
+    """
     jac = nd.Jacobian(f)(x)
     return np.trace(jac)
 
@@ -741,7 +852,15 @@ def acceleration_(v: np.ndarray, J: np.ndarray) -> np.ndarray:
 
 
 def curvature_method1(a: np.array, v: np.array) -> float:
-    """https://link.springer.com/article/10.1007/s12650-018-0474-6"""
+    """A method to calculate curvature from https://link.springer.com/article/10.1007/s12650-018-0474-6
+
+    Args:
+        a: Acceleration vector
+        v: Velocity vector.
+
+    Returns:
+        Curvature value.
+    """
     if v.ndim == 1:
         v = v[:, None]
     kappa = np.linalg.norm(np.outer(v, a)) / np.linalg.norm(v) ** 3
@@ -750,15 +869,32 @@ def curvature_method1(a: np.array, v: np.array) -> float:
 
 
 def curvature_method2(a: np.array, v: np.array) -> float:
-    """https://dl.acm.org/doi/10.5555/319351.319441"""
+    """A method to calculate curvature from https://dl.acm.org/doi/10.5555/319351.319441
+
+    Args:
+        a: Acceleration vector
+        v: Velocity vector.
+
+    Returns:
+        Curvature value.
+    """
     # if v.ndim == 1: v = v[:, None]
     kappa = (np.multiply(a, np.dot(v, v)) - np.multiply(v, np.dot(v, a))) / np.linalg.norm(v) ** 4
 
     return kappa
 
 
-def torsion_(v, J, a):
-    """only works in 3D"""
+def torsion_(v: np.ndarray, J: np.ndarray, a: np.ndarray) -> np.ndarray:
+    """A method to calculate torsion only works in 3D.
+
+    Args:
+        v: Velocity vector.
+        J: Jacobian matrix.
+        a: Acceleration vector.
+
+    Returns:
+        Torsion value.
+    """
     if v.ndim == 1:
         v = v[:, None]
     tau = np.outer(v, a).dot(J.dot(a)) / np.linalg.norm(np.outer(v, a)) ** 2
@@ -767,12 +903,27 @@ def torsion_(v, J, a):
 
 
 @timeit
-def compute_acceleration(vf, f_jac, X, Js=None, return_all=False):
+def compute_acceleration(
+    vf: Callable,
+    f_jac: Callable,
+    X: np.ndarray,
+    Js: Optional[np.ndarray] = None,
+    return_all: bool = False,
+) -> Tuple:
     """Calculate acceleration for many samples via
 
     .. math::
     a = J \cdot v.
 
+    Args:
+        vf: Vector field function.
+        f_jac: Jacobian function.
+        X: Cell states.
+        Js: Jacobian matrices for each sample, if X is not provided.
+        return_all: Whether to return all intermediate results.
+
+    Returns:
+        Acceleration array across Jacobians for many samples.
     """
     n = len(X)
     acce = np.zeros(n)
@@ -794,7 +945,13 @@ def compute_acceleration(vf, f_jac, X, Js=None, return_all=False):
 
 
 @timeit
-def compute_curvature(vf, f_jac, X, Js=None, formula=2):
+def compute_curvature(
+    vf: Callable,
+    f_jac: Callable,
+    X: np.ndarray,
+    Js: Optional[np.ndarray] = None,
+    formula: int = 2,
+) -> Tuple[np.ndarray, np.ndarray]:
     """Calculate curvature for many samples via
 
     Formula 1:
@@ -822,11 +979,19 @@ def compute_curvature(vf, f_jac, X, Js=None, formula=2):
 
 
 @timeit
-def compute_torsion(vf, f_jac, X):
+def compute_torsion(vf: Callable, f_jac: Callable, X: np.ndarray) -> np.ndarray:
     """Calculate torsion for many samples via
 
     .. math::
     \tau = \frac{(\mathbf{v} \times \mathbf{a}) \cdot (\mathbf{J} \cdot \mathbf{a})}{||\mathbf{V} \times \mathbf{a}||^2}
+
+    Args:
+        vf: Vector field function.
+        f_jac: Jacobian function.
+        X: Cell states.
+
+    Returns:
+        Torsion array across Jacobians for many samples.
     """
     if X.shape[1] != 3:
         raise Exception(f"torsion is only defined in 3 dimension.")
@@ -843,11 +1008,18 @@ def compute_torsion(vf, f_jac, X):
 
 
 @timeit
-def compute_sensitivity(f_jac, X):
+def compute_sensitivity(f_jac: Callable, X: np.ndarray) -> np.ndarray:
     """Calculate sensitivity for many samples via
 
     .. math::
     S = (I - J)^{-1} D(\frac{1}{{I-J}^{-1}})
+
+    Args:
+        f_jac: Jacobian function.
+        X: Cell states.
+
+    Returns:
+        Sensitivity array across Jacobians for many samples.
     """
     J = f_jac(X)
 
@@ -868,8 +1040,25 @@ def compute_sensitivity(f_jac, X):
     return S
 
 
-def curl3d(f, x, method="analytical", VecFld=None, jac=None):
-    """Curl of the reconstructed vector field f evaluated at x in 3D"""
+def curl3d(
+    f: Callable,
+    x: np.ndarray,
+    method: str = "analytical",
+    VecFld: Optional[VecFldDict] = None,
+    jac: Optional[np.ndarray] = None,
+) -> np.ndarray:
+    """Curl of the reconstructed vector field f evaluated at x in 3D.
+
+    Args:
+        f: The vector field function.
+        x: The coordinates where the curl is evaluated.
+        method: The method used to calculate the Jacobian. Defaults to "analytical".
+        VecFld: The vector field dictionary. Defaults to None.
+        jac: The Jacobian matrix. Defaults to None.
+
+    Returns:
+        The curl of the vector field function evaluated at x.
+    """
     if jac is None:
         if method == "analytical" and VecFld is not None:
             jac = Jacobian_rkhs_gaussian(x, VecFld)
@@ -879,7 +1068,13 @@ def curl3d(f, x, method="analytical", VecFld=None, jac=None):
     return np.array([jac[2, 1] - jac[1, 2], jac[0, 2] - jac[2, 0], jac[1, 0] - jac[0, 1]])
 
 
-def curl2d(f, x, method="analytical", VecFld=None, jac=None):
+def curl2d(
+    f: Callable,
+    x: np.ndarray,
+    method: str = "analytical",
+    VecFld: Optional[VecFldDict] = None,
+    jac: Optional[np.ndarray] = None,
+) -> np.ndarray:
     """Curl of the reconstructed vector field f evaluated at x in 2D"""
     if jac is None:
         if method == "analytical" and VecFld is not None:
@@ -893,8 +1088,16 @@ def curl2d(f, x, method="analytical", VecFld=None, jac=None):
 
 
 @timeit
-def compute_curl(f_jac, X):
-    """Calculate curl for many samples for 2/3 D systems."""
+def compute_curl(f_jac: Callable, X: np.ndarray) -> np.ndarray:
+    """Calculate curl for many samples for 2/3 D systems.
+
+    Args:
+        f_jac: Jacobian function.
+        X: Cell states.
+
+    Returns:
+        Curl array across Jacobians for many samples.
+    """
     if X.shape[1] > 3:
         raise Exception(f"curl is only defined in 2/3 dimension.")
 
@@ -1145,8 +1348,16 @@ def rank_vector_calculus_metrics(mat: np.mat, genes: list, group, groups: list, 
 # https://stackoverflow.com/questions/2827393/angles-between-two-n-dimensional-vectors-in-python#answer-13849249
 # answer from crizCraig
 # @njit(cache=True, nogil=True) # causing numba error_write issue
-def angle(vector1, vector2):
-    """Returns the angle in radians between given vectors"""
+def angle(vector1: np.ndarray, vector2: np.ndarray) -> float:
+    """Calculate the angle in radians between given vectors.
+
+    Args:
+        vector1: The first vector.
+        vector2: The second vector.
+
+    Returns:
+        The angle in radians between the two vectors.
+    """
     v1_norm, v1_u = unit_vector(vector1)
     v2_norm, v2_u = unit_vector(vector2)
 
@@ -1164,8 +1375,15 @@ def angle(vector1, vector2):
 
 
 # @njit(cache=True, nogil=True) # causing numba error_write issue
-def unit_vector(vector):
-    """Returns the unit vector of the vector."""
+def unit_vector(vector: np.ndarray) -> Tuple[float, np.ndarray]:
+    """Calculate the unit vector of given vector.
+
+    Args:
+        vector: A vector.
+
+    Returns:
+        The unit vector of the vector.
+    """
     vec_norm = np.linalg.norm(vector)
     if vec_norm == 0:
         return vec_norm, vector
@@ -1173,8 +1391,21 @@ def unit_vector(vector):
         return vec_norm, vector / vec_norm
 
 
-def normalize_vectors(vectors, axis=1, **kwargs):
-    """Returns the unit vectors of the vectors."""
+def normalize_vectors(
+    vectors: np.ndarray,
+    axis: int = 1,
+    **kwargs,
+) -> np.ndarray:
+    """Get the unit vectors of the vectors.
+
+    Args:
+        vectors: The vectors.
+        axis: The axis along which to normalize the vectors. Defaults to 1.
+        **kwargs: Additional keyword arguments.
+
+    Returns:
+        The unit vectors of the vectors.
+    """
     vec = np.array(vectors, copy=True)
     vec = np.atleast_2d(vec)
     vec_norm = np.linalg.norm(vec, axis=axis, **kwargs)
@@ -1188,7 +1419,16 @@ def normalize_vectors(vectors, axis=1, **kwargs):
 # topology related utilies
 
 
-def is_outside(X, domain):
+def is_outside(X: np.ndarray, domain: np.ndarray) -> np.ndarray:
+    """A function to check if a point is outside the domain.
+
+    Args:
+        X: The point.
+        domain: The domain.
+
+    Returns:
+        A boolean array indicating whether the point is outside the domain.
+    """
     is_outside = np.zeros(X.shape[0], dtype=bool)
     for k in range(X.shape[1]):
         o = np.logical_or(X[:, k] < domain[k][0], X[:, k] > domain[k][1])
@@ -1196,7 +1436,17 @@ def is_outside(X, domain):
     return is_outside
 
 
-def remove_redundant_points(X, tol=1e-4, output_discard=False):
+def remove_redundant_points(X: np.ndarray, tol: float = 1e-4, output_discard: bool = False) -> Union[np.ndarray, Tuple]:
+    """Remove redundant points from a set of points.
+
+    Args:
+        X: The set of points.
+        tol: The tolerance.
+        output_discard: A boolean flag indicating whether to output the discarded points. Defaults to False.
+
+    Returns:
+        The set of points with redundant points removed.
+    """
     X = np.atleast_2d(X)
     discard = np.zeros(len(X), dtype=bool)
     if X.shape[0] > 1:
@@ -1222,11 +1472,11 @@ def find_fixed_points(
     """Given sampling points, a function, and a domain, finds points for which func_vf(x) = 0.
 
     Args:
-        x0_list: Array-like structure with sampling points
-        func_vf: Function for which to find fixed points
-        domain: Finds fixed points within the given domain of shape (n_dim, 2)
-        tol_redundant: Margin outside of which points are considered distinct
-        return_all: If set to true, always return a tuple of three arrays as output
+        x0_list: Array-like structure with sampling points.
+        func_vf: Function for which to find fixed points.
+        domain: Finds fixed points within the given domain of shape (n_dim, 2).
+        tol_redundant: Margin outside of which points are considered distinct.
+        return_all: If set to true, always return a tuple of three arrays as output.
 
     Returns:
         A tuple with the solutions, Jacobian matrix, and function values at the solutions.
@@ -1278,7 +1528,25 @@ def find_fixed_points(
 
 # ---------------------------------------------------------------------------------------------------
 # data retrieval related utilies
-def intersect_sources_targets(regulators, regulators_, effectors, effectors_, Der):
+def intersect_sources_targets(
+    regulators: Union[str, List[str], None],
+    regulators_: List[str],
+    effectors: Union[str, List[str], None],
+    effectors_: List[str],
+    Der: np.ndarray,
+):
+    """Intersect source and target genes with the available genes in the Jacobian matrix.
+
+    Args:
+        regulators: The source genes.
+        regulators_: The available source genes.
+        effectors: The target genes.
+        effectors_: The available target genes.
+        Der: The Jacobian matrix.
+
+    Returns:
+        The Jacobian matrix and the source and target genes.
+    """
     regulators = regulators_ if regulators is None else regulators
     effectors = effectors_ if effectors is None else effectors
     if type(regulators) == str:
@@ -1372,14 +1640,14 @@ def get_jacobian(
     """Return dataframe with Jacobian values (where regulators are in the denominator and effectors in the numerator)
 
     Args:
-        adata: AnnData object
-        regulators: string labels capturing regulator genes of interest
-        effectors: string labels capturing effector genes of interest
+        adata: AnnData object.
+        regulators: String labels capturing regulator genes of interest.
+        effectors: String labels capturing effector genes of interest.
         jkey: Defaults to "jacobian".
         j_basis: Defaults to "pca".
 
     Returns:
-        dataframe with Jacobian values (where regulators are in the denominator and effectors in the numerator)
+        A dataframe with Jacobian values (where regulators are in the denominator and effectors in the numerator).
     """
 
     regulators, effectors = (
@@ -1432,15 +1700,15 @@ def get_jacobian(
 # ---------------------------------------------------------------------------------------------------
 # jacobian subset related utilies
 def subset_jacobian(adata: AnnData, cells: np.ndarray, basis: str = "pca"):
-    """Subset adata object while also subset the jacobian
+    """Subset adata object while also subset the jacobian.
 
     Args:
-        adata: AnnData object
-        cells: vector of cell indices
-        basis: string specifying jacobian layer to subset
+        adata: AnnData object.
+        cells: Vector of cell indices.
+        basis: String specifying jacobian layer to subset.
 
     Returns:
-        subset of adata
+        Subset of adata.
     """
 
     adata_subset = adata[cells]
