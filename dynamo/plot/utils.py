@@ -4,7 +4,7 @@ import os
 
 # import matplotlib.tri as tri
 import warnings
-from typing import Any, Dict, List, Literal, Optional, Tuple
+from typing import Any, Callable, Dict, List, Literal, Optional, Sequence, Tuple, Union
 from warnings import warn
 
 import matplotlib
@@ -12,7 +12,9 @@ import matplotlib.patheffects as PathEffects
 import matplotlib.pyplot as plt
 import numba
 import numpy as np
+import numpy.typing as npt
 import pandas as pd
+from anndata import AnnData
 from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
 from scipy.spatial import Delaunay
@@ -24,28 +26,32 @@ from ..tools.utils import integrate_vf, update_dict  # integrate_vf_ivp
 
 # ---------------------------------------------------------------------------------------------------
 # variable checking utilities
-def is_gene_name(adata, var):
+def is_gene_name(adata: AnnData, var: Union[str, np.str_]) -> bool:
+    """Check if the given variable is a gene name in the adata.var.index."""
     if type(var) in [str, np.str_]:
         return var in adata.var.index
     else:
         return False
 
 
-def is_cell_anno_column(adata, var):
+def is_cell_anno_column(adata: AnnData, var: Union[str, np.str_]) -> bool:
+    """Check if the given variable is a column name in the adata.obs."""
     if type(var) in [str, np.str_]:
         return var in adata.obs.columns
     else:
         return False
 
 
-def is_layer_keys(adata, var):
+def is_layer_keys(adata: AnnData, var: Union[str, np.str_]) -> bool:
+    """Check if the given variable is a layer key in the adata.layers."""
     if type(var) in [str, np.str_]:
         return var in adata.layers.keys()
     else:
         return False
 
 
-def is_list_of_lists(list_of_lists):
+def is_list_of_lists(list_of_lists: List[List[Any]]) -> bool:
+    """Check if the given variable is a list of lists."""
     all(isinstance(elem, list) for elem in list_of_lists)
 
 
@@ -66,7 +72,17 @@ def get_color_map_from_labels(labels: np.ndarray, color_key_cmap: str = "glasbey
     return dict(zip(unique_labels, color_key))
 
 
-def _get_adata_color_vec(adata, layer, col):
+def _get_adata_color_vec(adata: AnnData, layer: str, col: str) -> np.ndarray:
+    """Get the color vector from adata.obs or adata.obsm.
+
+    Args:
+        adata: an AnnData object.
+        layer: the layer to be used to get the color vector.
+        col: the column name in the adata.obs or adata.obsm.
+
+    Returns:
+        The color vector from adata.obs or adata.obsm.
+    """
     if layer in ["protein", "X_protein"]:
         _color = adata.obsm[layer].loc[col, :]
     elif layer == "X":
@@ -77,24 +93,70 @@ def _get_adata_color_vec(adata, layer, col):
 
 
 def calculate_colors(
-    points,
-    ax=None,
-    labels=None,
-    values=None,
-    highlights=None,
-    cmap="Blues",
-    color_key=None,
-    color_key_cmap="Spectral",
-    background="white",
-    width=7,
-    height=5,
-    vmin=2,
-    vmax=98,
-    sort="raw",
-    sym_c=False,
-    projection=None,  # default in matplotlib
+    points: np.ndarray,
+    ax: Optional[plt.Axes] = None,
+    labels: Optional[Union[List, np.ndarray]] = None,
+    values: Optional[np.ndarray] = None,
+    highlights: Optional[Union[str, List[str]]] = None,
+    cmap: str = "Blues",
+    color_key: Optional[Union[Dict, List[str]]] = None,
+    color_key_cmap: str = "Spectral",
+    background: str = "white",
+    width: Union[float, int] = 7,
+    height: Union[float, int] = 5,
+    vmin: Union[float, int] = 2,
+    vmax: Union[float, int] = 98,
+    sort: str = "raw",
+    sym_c: bool = False,
+    projection: Optional[str] = None,  # default in matplotlib
     **kwargs,
 ):
+    """Calculate colors for points based on labels or values.
+
+    Args:
+        points: the points to be plotted.
+        ax: the axis to be used to plot the points.
+        labels: an array of labels (assumed integer or categorical), one for each data sample. This will be used for
+            coloring the points in the plot according to their label. Note that this option is mutually exclusive to the
+            `values` option. Defaults to None.
+        values: an array of values (assumed float or continuous), one for each sample. This will be used for coloring
+            the points in the plot according to a colorscale associated to the total range of values. Note that this
+            option is mutually exclusive to the `labels` option. Defaults to None.
+        highlights: the color group that will be highlighted. If highlights is a list of lists, each list is relate to
+            each color element. Defaults to None.
+        cmap: The name of a matplotlib colormap to use for coloring or shading points. If no labels or values are passed
+            this will be used for shading points according to density (largely only of relevance for very large
+            datasets). If values are passed this will be used for shading according the value. Note that if theme is
+            passed then this value will be overridden by the corresponding option of the theme. Defaults to None.
+        color_key: the method to assign colors to categoricals. This can either be an explicit dict mapping labels to
+            colors (as strings of form '#RRGGBB'), or an array like object providing one color for each distinct
+            category being provided in `labels`. Either way this mapping will be used to color points according to the
+            label. Note that if theme is passed then this value will be overridden by the corresponding option of the
+            theme. Defaults to None.
+        color_key_cmap: the name of a matplotlib colormap to use for categorical coloring. If an explicit `color_key` is
+            not given a color mapping for categories can be generated from the label list and selecting a matching list
+            of colors from the given colormap. Note that if theme is passed then this value will be overridden by the
+            corresponding option of the theme. Defaults to None.
+        background: the color of the background. Usually this will be either 'white' or 'black', but any color name will
+            work. Ideally one wants to match this appropriately to the colors being used for points etc. This is one of
+            the things that themes handle for you. Note that if theme is passed then this value will be overridden by
+            the corresponding option of the theme. Defaults to None.
+        width: the width of the figure.
+        height: the height of the figure.
+        vmin: the minimum value for the color map.
+        vmax: the maximum value for the color map.
+        sort: the method to reorder data so that high values points will be on top of background points. Can be one of
+            {'raw', 'abs', 'neg'}, i.e. sorted by raw data, sort by absolute values or sort by negative values. Defaults
+            to "raw".
+        sym_c: whether do you want to make the limits of continuous color to be symmetric, normally this should be used
+            for plotting velocity, jacobian, curl, divergence or other types of data with both positive or negative
+            values. Defaults to False.
+        projection: the projection type for the plot.
+        **kwargs: other keyword arguments.
+
+    Returns:
+        The colors for the points.
+    """
     import matplotlib.pyplot as plt
     from matplotlib.ticker import MaxNLocator
 
@@ -289,7 +351,23 @@ def calculate_colors(
 # link: https://github.com/lmcinnes/umap/blob/7e051d8f3c4adca90ca81eb45f6a9d1372c076cf/umap/plot.py
 
 
-def map2color(val, min=None, max=None, cmap="viridis"):
+def map2color(
+    val: np.ndarray,
+    min: Optional[float] = None,
+    max: Optional[float] = None,
+    cmap: str = "viridis",
+) -> np.ndarray:
+    """Map a value to a color in a specified colormap.
+
+    Args:
+        val: the value to be mapped.
+        min: the minimum value for the color map. Defaults to None.
+        max: the maximum value for the color map. Defaults to None.
+        cmap: the name of a matplotlib colormap to use for coloring or shading points. Defaults to "viridis".
+
+    Returns:
+        The color mapped from the value in the specified colormap.
+    """
     import matplotlib
     import matplotlib.cm as cm
     import matplotlib.pyplot as plt
@@ -305,7 +383,15 @@ def map2color(val, min=None, max=None, cmap="viridis"):
     return cols
 
 
-def _to_hex(arr):
+def _to_hex(arr: np.ndarray) -> List[str]:
+    """Convert an array of colors to hex strings.
+
+    Args:
+        arr: the array of colors to be converted to hex strings.
+
+    Returns:
+        The hex strings converted from the array of colors.
+    """
     return [matplotlib.colors.to_hex(c) for c in arr]
 
 
@@ -317,28 +403,32 @@ the left-most (highest-order) byte is red, the middle byte is green and the righ
 
 
 @numba.vectorize(["uint8(uint32)", "uint8(uint32)"])
-def _red(x):
+def _red(x: int) -> int:
+    """Get the red color from a given color."""
     return (x & 0xFF0000) >> 16
 
 
 @numba.vectorize(["uint8(uint32)", "uint8(uint32)"])
-def _green(x):
+def _green(x: int) -> int:
+    """Get the green color from a given color."""
     return (x & 0x00FF00) >> 8
 
 
 @numba.vectorize(["uint8(uint32)", "uint8(uint32)"])
-def _blue(x):
+def _blue(x: int) -> int:
+    """Get the blue color from a given color."""
     return x & 0x0000FF
 
 
-def _embed_datashader_in_an_axis(datashader_image, ax):
+def _embed_datashader_in_an_axis(datashader_image, ax: plt.Axes) -> plt.Axes:
+    """Embed a datashader image in a matplotlib axis."""
     img_rev = datashader_image.data[::-1]
     mpl_img = np.dstack([_blue(img_rev), _green(img_rev), _red(img_rev)])
     ax.imshow(mpl_img)
     return ax
 
 
-def _get_extent(points):
+def _get_extent(points: np.ndarray) -> Tuple[float, float, float, float]:
     """Compute bounds on a space with appropriate padding"""
     min_x = np.min(points[:, 0])
     max_x = np.max(points[:, 0])
@@ -355,7 +445,8 @@ def _get_extent(points):
     return extent
 
 
-def _select_font_color(background):
+def _select_font_color(background: str) -> str:
+    """Select the font color based on the background color."""
     if background in ["k", "black"]:
         font_color = "white"
     elif background in ["w", "white"]:
@@ -377,7 +468,15 @@ def _select_font_color(background):
     return font_color
 
 
-def _scatter_projection(ax, points, projection, **kwargs):
+def _scatter_projection(ax: plt.Axes, points: np.ndarray, projection: str, **kwargs) -> None:
+    """Scatter plot for points in a specified projection.
+
+    Args:
+        ax: the axis to be used to plot the points.
+        points: the points to be plotted.
+        projection: the projection type for the plot.
+        **kwargs: other keyword arguments.
+    """
     if projection == "3d":
         ax.scatter(points[:, 0], points[:, 1], points[:, 2], **kwargs)
     else:
@@ -385,31 +484,88 @@ def _scatter_projection(ax, points, projection, **kwargs):
 
 
 def _matplotlib_points(
-    points,
-    ax=None,
-    labels=None,
-    values=None,
-    highlights=None,
-    cmap="Blues",
-    color_key=None,
-    color_key_cmap="Spectral",
-    background="white",
-    width=7,
-    height=5,
-    show_legend=True,
-    vmin=2,
-    vmax=98,
-    sort="raw",
-    frontier=False,
-    contour=False,
-    ccmap=None,
-    calpha=0.4,
-    sym_c=False,
-    inset_dict={},
-    show_colorbar=True,
-    projection=None,  # default in matplotlib
+    points: np.ndarray,
+    ax: Optional[plt.Axes] = None,
+    labels: Optional[Union[List, np.ndarray]] = None,
+    values: Optional[np.ndarray] = None,
+    highlights: Optional[Union[str, List[str]]] = None,
+    cmap: str = "Blues",
+    color_key: Optional[Union[Dict, List[str]]] = None,
+    color_key_cmap: str = "Spectral",
+    background: str = "white",
+    width: Union[float, int] = 7,
+    height: Union[float, int] = 5,
+    show_legend: bool = True,
+    vmin: Union[float, int] = 2,
+    vmax: Union[float, int] = 98,
+    sort: str = "raw",
+    frontier: bool = False,
+    contour: bool = False,
+    ccmap: Optional[str] = None,
+    calpha: Union[float, int] = 0.4,
+    sym_c: bool = False,
+    inset_dict: Dict = {},
+    show_colorbar: bool = True,
+    projection: Optional[str] = None,  # default in matplotlib
     **kwargs,
-):
+) -> Optional[Tuple]:
+    """Use matplotlib to plot points.
+
+    Args:
+        points: the points to be plotted.
+        ax: the axis to be used to plot the points.
+        labels: an array of labels (assumed integer or categorical), one for each data sample. This will be used for
+            coloring the points in the plot according to their label. Note that this option is mutually exclusive to the
+            `values` option. Defaults to None.
+        values: an array of values (assumed float or continuous), one for each sample. This will be used for coloring
+            the points in the plot according to a colorscale associated to the total range of values. Note that this
+            option is mutually exclusive to the `labels` option. Defaults to None.
+        highlights: the color group that will be highlighted. If highlights is a list of lists, each list is relate to
+            each color element. Defaults to None.
+        cmap: The name of a matplotlib colormap to use for coloring or shading points. If no labels or values are passed
+            this will be used for shading points according to density (largely only of relevance for very large
+            datasets). If values are passed this will be used for shading according the value. Note that if theme is
+            passed then this value will be overridden by the corresponding option of the theme. Defaults to None.
+        color_key: the method to assign colors to categoricals. This can either be an explicit dict mapping labels to
+            colors (as strings of form '#RRGGBB'), or an array like object providing one color for each distinct
+            category being provided in `labels`. Either way this mapping will be used to color points according to the
+            label. Note that if theme is passed then this value will be overridden by the corresponding option of the
+            theme. Defaults to None.
+        color_key_cmap: the name of a matplotlib colormap to use for categorical coloring. If an explicit `color_key` is
+            not given a color mapping for categories can be generated from the label list and selecting a matching list
+            of colors from the given colormap. Note that if theme is passed then this value will be overridden by the
+            corresponding option of the theme. Defaults to None.
+        background: the color of the background. Usually this will be either 'white' or 'black', but any color name will
+            work. Ideally one wants to match this appropriately to the colors being used for points etc. This is one of
+            the things that themes handle for you. Note that if theme is passed then this value will be overridden by
+            the corresponding option of the theme. Defaults to None.
+        width: the width of the figure.
+        height: the height of the figure.
+        show_legend: whether to show the legend. Defaults to True.
+        vmin: the minimum value for the color map.
+        vmax: the maximum value for the color map.
+        sort: the method to reorder data so that high values points will be on top of background points. Can be one of
+            {'raw', 'abs', 'neg'}, i.e. sorted by raw data, sort by absolute values or sort by negative values. Defaults
+            to "raw".
+        frontier: whether to draw the frontier. Defaults to False.
+        contour: whether to draw the contour. Defaults to False.
+        ccmap: the name of a matplotlib colormap to use for contouring. Defaults to None.
+        calpha: the alpha value for the contour. Defaults to 0.4.
+        sym_c: whether do you want to make the limits of continuous color to be symmetric, normally this should be used
+            for plotting velocity, jacobian, curl, divergence or other types of data with both positive or negative
+            values. Defaults to False.
+        inset_dict: a  dictionary of parameters in inset_ax. Example, something like {"width": "5%", "height": "50%", "loc":
+            'lower left', "bbox_to_anchor": (0.85, 0.90, 0.145, 0.145), "bbox_transform": ax.transAxes, "borderpad": 0}
+            See more details at https://matplotlib.org/api/_as_gen/mpl_toolkits.axes_grid1.inset_locator.inset_axes.html
+            or https://stackoverflow.com/questions/39803385/what-does-a-4-element-tuple-argument-for-bbox-to-anchor-mean-in-matplotlib.
+            Defaults to {}.
+        show_colorbar: whether to show the colorbar. Defaults to True.
+        projection: the projection type for the plot.
+        **kwargs: other keyword arguments.
+
+    Returns:
+        The colors for the points and the axes.
+    """
     import matplotlib.pyplot as plt
     from matplotlib.ticker import MaxNLocator
 
@@ -853,24 +1009,68 @@ def _matplotlib_points(
 
 
 def _datashade_points(
-    points,
-    ax=None,
-    labels=None,
-    values=None,
-    highlights=None,
-    cmap="blue",
-    color_key=None,
-    color_key_cmap="Spectral",
-    background="black",
-    width=7,
-    height=5,
-    show_legend=True,
-    vmin=2,
-    vmax=98,
-    sort="raw",
-    projection="2d",
+    points: np.ndarray,
+    ax: Optional[plt.Axes] = None,
+    labels: Optional[Union[List, np.ndarray]] = None,
+    values: Optional[np.ndarray] = None,
+    highlights: Optional[Union[str, List[str]]] = None,
+    cmap: str = "blue",
+    color_key: Optional[Union[Dict, List[str]]] = None,
+    color_key_cmap: str = "Spectral",
+    background: str = "black",
+    width: Union[float, int] = 7,
+    height: Union[float, int] = 5,
+    show_legend: bool = True,
+    vmin: Union[float, int] = 2,
+    vmax: Union[float, int] = 98,
+    sort: str = "raw",
+    projection: str = "2d",
     **kwargs,
-):
+) -> Optional[Tuple]:
+    """Use datashader to plot points.
+
+    Args:
+        points: the points to be plotted.
+        ax: the axis to be used to plot the points.
+        labels: an array of labels (assumed integer or categorical), one for each data sample. This will be used for
+            coloring the points in the plot according to their label. Note that this option is mutually exclusive to the
+            `values` option. Defaults to None.
+        values: an array of values (assumed float or continuous), one for each sample. This will be used for coloring
+            the points in the plot according to a colorscale associated to the total range of values. Note that this
+            option is mutually exclusive to the `labels` option. Defaults to None.
+        highlights: the color group that will be highlighted. If highlights is a list of lists, each list is relate to
+            each color element. Defaults to None.
+        cmap: The name of a matplotlib colormap to use for coloring or shading points. If no labels or values are passed
+            this will be used for shading points according to density (largely only of relevance for very large
+            datasets). If values are passed this will be used for shading according the value. Note that if theme is
+            passed then this value will be overridden by the corresponding option of the theme. Defaults to None.
+        color_key: the method to assign colors to categoricals. This can either be an explicit dict mapping labels to
+            colors (as strings of form '#RRGGBB'), or an array like object providing one color for each distinct
+            category being provided in `labels`. Either way this mapping will be used to color points according to the
+            label. Note that if theme is passed then this value will be overridden by the corresponding option of the
+            theme. Defaults to None.
+        color_key_cmap: the name of a matplotlib colormap to use for categorical coloring. If an explicit `color_key` is
+            not given a color mapping for categories can be generated from the label list and selecting a matching list
+            of colors from the given colormap. Note that if theme is passed then this value will be overridden by the
+            corresponding option of the theme. Defaults to None.
+        background: the color of the background. Usually this will be either 'white' or 'black', but any color name will
+            work. Ideally one wants to match this appropriately to the colors being used for points etc. This is one
+            of the things that themes handle for you. Note that if theme is passed then this value will be overridden by
+            the corresponding option of the theme. Defaults to None.
+        width: the width of the figure.
+        height: the height of the figure.
+        show_legend: whether to show the legend. Defaults to True.
+        vmin: the minimum value for the color map.
+        vmax: the maximum value for the color map.
+        sort: the method to reorder data so that high values points will be on top of background points. Can be one of
+            {'raw', 'abs', 'neg'}, i.e. sorted by raw data, sort by absolute values or sort by negative values. Defaults
+            to "raw".
+        projection: the projection type for the plot.
+        **kwargs: other keyword arguments.
+
+    Returns:
+        The colors for the points and the axes.
+    """
     import datashader as ds
     import datashader.transfer_functions as tf
     import matplotlib.pyplot as plt
@@ -1029,105 +1229,69 @@ def _datashade_points(
 
 def interactive(
     umap_object,
-    labels=None,
-    values=None,
-    hover_data=None,
-    theme=None,
-    cmap="Blues",
-    color_key=None,
-    color_key_cmap="Spectral",
-    background="white",
-    width=7,
-    height=5,
-    point_size=None,
+    labels: Optional[Union[List, np.ndarray]] = None,
+    values: Optional[np.ndarray] = None,
+    hover_data: Optional[pd.DataFrame] = None,
+    theme: Optional[str] = None,
+    cmap: str = "Blues",
+    color_key: Optional[Union[Dict, List[str]]] = None,
+    color_key_cmap: str = "Spectral",
+    background: str = "white",
+    width: Union[float, int] = 7,
+    height: Union[float, int] = 5,
+    point_size: Optional[float] = None,
 ):
     """Create an interactive bokeh plot of a UMAP embedding.
-    While static plots are useful, sometimes a plot that
-    supports interactive zooming, and hover tooltips for
-    individual points is much more desireable. This function
-    provides a simple interface for creating such plots. The
-    result is a bokeh plot that will be displayed in a notebook.
-    Note that more complex tooltips etc. will require custom
-    code -- this is merely meant to provide fast and easy
-    access to interactive plotting.
-    Parameters
-    ----------
-    umap_object: trained UMAP object
-        A trained UMAP object that has a 2D embedding.
-    labels: array, shape (n_samples,) (optional, default None)
-        An array of labels (assumed integer or categorical),
-        one for each data sample.
-        This will be used for coloring the points in
-        the plot according to their label. Note that
-        this option is mutually exclusive to the ``values``
-        option.
-    values: array, shape (n_samples,) (optional, default None)
-        An array of values (assumed float or continuous),
-        one for each sample.
-        This will be used for coloring the points in
-        the plot according to a colorscale associated
-        to the total range of values. Note that this
-        option is mutually exclusive to the ``labels``
-        option.
-    hover_data: DataFrame, shape (n_samples, n_tooltip_features)
-    (optional, default None)
-        A dataframe of tooltip data. Each column of the dataframe
-        should be a Series of length ``n_samples`` providing a value
-        for each data point. Column names will be used for
-        identifying information within the tooltip.
-    theme: string (optional, default None)
-        A color theme to use for plotting. A small set of
-        predefined themes are provided which have relatively
-        good aesthetics. Available themes are:
-           * 'blue'
-           * 'red'
-           * 'green'
-           * 'inferno'
-           * 'fire'
-           * 'viridis'
-           * 'darkblue'
-           * 'darkred'
-           * 'darkgreen'
-    cmap: string (optional, default 'Blues')
-        The name of a matplotlib colormap to use for coloring
-        or shading points. If no labels or values are passed
-        this will be used for shading points according to
-        density (largely only of relevance for very large
-        datasets). If values are passed this will be used for
-        shading according the value. Note that if theme
-        is passed then this value will be overridden by the
-        corresponding option of the theme.
-    color_key: dict or array, shape (n_categories) (optional, default None)
-        A way to assign colors to categoricals. This can either be
-        an explicit dict mapping labels to colors (as strings of form
-        '#RRGGBB'), or an array like object providing one color for
-        each distinct category being provided in ``labels``. Either
-        way this mapping will be used to color points according to
-        the label. Note that if theme
-        is passed then this value will be overridden by the
-        corresponding option of the theme.
-    color_key_cmap: string (optional, default 'Spectral')
-        The name of a matplotlib colormap to use for categorical coloring.
-        If an explicit ``color_key`` is not given a color mapping for
-        categories can be generated from the label list and selecting
-        a matching list of colors from the given colormap. Note
-        that if theme
-        is passed then this value will be overridden by the
-        corresponding option of the theme.
-    background: string (optional, default 'white)
-        The color of the background. Usually this will be either
-        'white' or 'black', but any color name will work. Ideally
-        one wants to match this appropriately to the colors being
-        used for points etc. This is one of the things that themes
-        handle for you. Note that if theme
-        is passed then this value will be overridden by the
-        corresponding option of the theme.
-    width: int (optional, default 800)
-        The desired width of the plot in pixels.
-    height: int (optional, default 800)
-        The desired height of the plot in pixels
-    Returns
-    -------
+
+    While static plots are useful, sometimes a plot that supports interactive zooming, and hover tooltips for
+    individual points is much more desireable. This function provides a simple interface for creating such plots. The
+    result is a bokeh plot that will be displayed in a notebook. Note that more complex tooltips etc. will require
+    custom code -- this is merely meant to provide fast and easy access to interactive plotting.
+
+    Args:
+        umap_object: A trained UMAP object that has a 2D embedding.
+        labels: An array of labels (assumed integer or categorical), one for each data sample. This will be used for
+            coloring the points in the plot according to their label. Note that this option is mutually exclusive
+            to the ``values`` option.
+        values: An array of values (assumed float or continuous), one for each sample. This will be used for coloring
+            the points in the plot according to a colorscale associated to the total range of values. Note that this
+            option is mutually exclusive to the ``labels`` option.
+        hover_data: A dataframe of tooltip data. Each column of the dataframe should be a Series of length ``n_samples``
+            providing a value for each data point. Column names will be used for identifying information within the tooltip.
+        theme: A color theme to use for plotting. A small set of predefined themes are provided which have relatively
+            good aesthetics. Available themes are:
+               * 'blue'
+               * 'red'
+               * 'green'
+               * 'inferno'
+               * 'fire'
+               * 'viridis'
+               * 'darkblue'
+               * 'darkred'
+               * 'darkgreen'
+        cmap: The name of a matplotlib colormap to use for coloring or shading points. If no labels or values are passed
+            this will be used for shading points according to density (largely only of relevance for very large
+            datasets). If values are passed this will be used for shading according the value. Note that if theme
+            is passed then this value will be overridden by the corresponding option of the theme.
+        color_key: A way to assign colors to categoricals. This can either be an explicit dict mapping labels to colors
+            (as strings of form '#RRGGBB'), or an array like object providing one color for each distinct category being
+            provided in ``labels``. Either way this mapping will be used to color points according to the label. Note
+            that if theme is passed then this value will be overridden by the corresponding option of the theme.
+        color_key_cmap: The name of a matplotlib colormap to use for categorical coloring. If an explicit ``color_key``
+            is not given a color mapping for categories can be generated from the label list and selecting a matching
+            list of colors from the given colormap. Note that if theme is passed then this value will be overridden by the
+            corresponding option of the theme.
+        background: The color of the background. Usually this will be either 'white' or 'black', but any color name
+            will work. Ideally one wants to match this appropriately to the colors being used for points etc. This is
+            one of the things that themes handle for you. Note that if theme is passed then this value will be
+            overridden by the corresponding option of the theme.
+        width: The desired width of the plot in pixels.
+        height: The desired height of the plot in pixels.
+        point_size: The size of the points in the plot. If not set this will be automatically determined based on the
+            number of points being plotted.
+
+    Returns:
+        A bokeh plot of the UMAP embedding.
     """
     import bokeh.plotting as bpl
     import bokeh.transform as btr
@@ -1260,7 +1424,8 @@ def interactive(
 # link - https://github.com/velocyto-team/velocyto-notebooks/blob/master/python/DentateGyrus.ipynb
 
 
-def despline(ax=None):
+def despline(ax: Optional[plt.Axes] = None) -> None:
+    """Remove the top and right spines of a plot."""
     import matplotlib.pyplot as plt
 
     ax = plt.gca() if ax is None else ax
@@ -1272,7 +1437,8 @@ def despline(ax=None):
     ax.xaxis.set_ticks_position("bottom")
 
 
-def despline_all(ax=None, sides=None):
+def despline_all(ax: Optional[plt.Axes] = None, sides: Optional[List[str]] = None) -> None:
+    """Remove the spines of a plot."""
     # removing the default axis on all sides:
     import matplotlib.pyplot as plt
 
@@ -1284,7 +1450,8 @@ def despline_all(ax=None, sides=None):
         ax.spines[side].set_visible(False)
 
 
-def deaxis_all(ax=None):
+def deaxis_all(ax: Optional[plt.Axes] = None) -> None:
+    """Remove the axis ticks of a plot."""
     # removing the axis ticks
     import matplotlib.pyplot as plt
 
@@ -1294,7 +1461,8 @@ def deaxis_all(ax=None):
     ax.get_yaxis().set_visible(False)
 
 
-def minimal_xticks(start, end):
+def minimal_xticks(start: Union[float, int], end: Union[float, int]) -> None:
+    """Set minimal xticks."""
     import matplotlib.pyplot as plt
 
     end_ = np.around(end, -int(np.log10(end)) + 1)
@@ -1304,7 +1472,8 @@ def minimal_xticks(start, end):
     plt.xticks(xlims, xlims_tx)
 
 
-def minimal_yticks(start, end):
+def minimal_yticks(start: Union[float, int], end: Union[float, int]) -> None:
+    """Set minimal yticks."""
     import matplotlib.pyplot as plt
 
     end_ = np.around(end, -int(np.log10(end)) + 1)
@@ -1314,7 +1483,8 @@ def minimal_yticks(start, end):
     plt.yticks(ylims, ylims_tx)
 
 
-def set_spine_linewidth(ax, lw):
+def set_spine_linewidth(ax: plt.Axes, lw: Union[float, int] = 0.5) -> plt.Axes:
+    """Set the linewidth of the spines of a plot."""
     for axis in ["top", "bottom", "left", "right"]:
         ax.spines[axis].set_linewidth(lw)
 
@@ -1325,7 +1495,29 @@ def set_spine_linewidth(ax, lw):
 # scatter plot utilities
 
 
-def scatter_with_colorbar(fig, ax, x, y, c, cmap, **scatter_kwargs):
+def scatter_with_colorbar(
+    fig: plt.Figure,
+    ax: plt.Axes,
+    x: np.ndarray,
+    y: np.ndarray,
+    c: np.ndarray,
+    cmap: str,
+    **scatter_kwargs,
+) -> Tuple[plt.Figure, plt.Axes]:
+    """Plot a scatter plot with a colorbar.
+
+    Args:
+        fig: The figure to be used to plot the scatter plot.
+        ax: The axis to be used to plot the scatter plot.
+        x: The x-axis data.
+        y: The y-axis data.
+        c: The color data.
+        cmap: The name of a matplotlib colormap to use for coloring or shading points.
+        scatter_kwargs: Other keyword arguments.
+
+    Returns:
+        The figure and the axis.
+    """
     # https://stackoverflow.com/questions/32462881/add-colorbar-to-existing-axis
     from mpl_toolkits.axes_grid1 import make_axes_locatable
 
@@ -1337,7 +1529,35 @@ def scatter_with_colorbar(fig, ax, x, y, c, cmap, **scatter_kwargs):
     return fig, ax
 
 
-def scatter_with_legend(fig, ax, df, font_color, x, y, c, cmap, legend, **scatter_kwargs):
+def scatter_with_legend(
+    fig: plt.Figure,
+    ax: plt.Axes,
+    df: pd.DataFrame,
+    font_color: str,
+    x: np.ndarray,
+    y: np.ndarray,
+    c: np.ndarray,
+    cmap: str,
+    legend: str,
+    **scatter_kwargs,
+) -> Tuple[plt.Figure, plt.Axes]:
+    """Plot a scatter plot with a legend.
+
+    Args:
+        fig: The figure to be used to plot the scatter plot.
+        ax: The axis to be used to plot the scatter plot.
+        df: The dataframe to be used to plot the scatter plot.
+        font_color: The color of the font.
+        x: The x-axis data.
+        y: The y-axis data.
+        c: The color data.
+        cmap: The name of a matplotlib colormap to use for coloring or shading points.
+        legend: The location of the legend.
+        scatter_kwargs: Other keyword arguments.
+
+    Returns:
+        The figure and the axis.
+    """
     import matplotlib.patheffects as PathEffects
     import seaborn as sns
 
@@ -1371,8 +1591,22 @@ def scatter_with_legend(fig, ax, df, font_color, x, y, c, cmap, legend, **scatte
     return fig, ax
 
 
-def set_colorbar(ax, inset_dict={}):
-    """https://matplotlib.org/3.1.0/gallery/axes_grid1/demo_colorbar_with_inset_locator.html"""
+def set_colorbar(ax: plt.Axes, inset_dict: Dict = {}) -> plt.Axes:
+    """Set the colorbar of a plot.
+
+    Method from https://matplotlib.org/3.1.0/gallery/axes_grid1/demo_colorbar_with_inset_locator.html
+
+    Args:
+        ax: The axis to be used to plot the colorbar.
+        inset_dict: a  dictionary of parameters in inset_ax. Example, something like {"width": "5%", "height": "50%", "loc":
+            'lower left', "bbox_to_anchor": (0.85, 0.90, 0.145, 0.145), "bbox_transform": ax.transAxes, "borderpad": 0}
+            See more details at https://matplotlib.org/api/_as_gen/mpl_toolkits.axes_grid1.inset_locator.inset_axes.html
+            or https://stackoverflow.com/questions/39803385/what-does-a-4-element-tuple-argument-for-bbox-to-anchor-mean-in-matplotlib.
+            Defaults to {}.
+
+    Returns:
+        The axis.
+    """
     from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 
     if len(inset_dict) == 0:
@@ -1392,9 +1626,18 @@ def set_colorbar(ax, inset_dict={}):
     return axins
 
 
-def arrowed_spines(ax, columns, background="white"):
-    """https://stackoverflow.com/questions/33737736/matplotlib-axis-arrow-tip
-    modified based on Answer 6
+def arrowed_spines(ax: plt.Axes, columns: Union[List[str], str], background: str = "white") -> plt.Axes:
+    """Add arrowed spines to a plot.
+
+    Modified based on Answer 6 in https://stackoverflow.com/questions/33737736/matplotlib-axis-arrow-tip
+
+    Args:
+        ax: The axis to be used to plot the arrowed spines.
+        columns: The column names of the data.
+        background: The color of the background. Defaults to "white".
+
+    Returns:
+        The axis.
     """
     if type(columns) == str:
         columns = [columns.upper() + " 0", columns.upper() + " 1"]
@@ -1489,14 +1732,14 @@ def arrowed_spines(ax, columns, background="white"):
 
 
 def quiver_autoscaler(X_emb: np.ndarray, V_emb: np.ndarray) -> float:
-    """Function to automatically calculate the value for the scale parameter of quiver plot, adapted from scVelo
+    """Function to automatically calculate the value for the scale parameter of quiver plot, adapted from scVelo.
 
     Args:
-        X_emb: X, Y-axis coordinates
-        V_emb: Velocity (U, V) values on the X, Y-axis
+        X_emb: X, Y-axis coordinates.
+        V_emb: Velocity (U, V) values on the X, Y-axis.
 
     Returns:
-        The scale for quiver plot
+        The scale for quiver plot.
     """
 
     import matplotlib.pyplot as plt
@@ -1534,7 +1777,19 @@ def quiver_autoscaler(X_emb: np.ndarray, V_emb: np.ndarray) -> float:
     return Q.scale / scale_factor * 2
 
 
-def default_quiver_args(arrow_size, arrow_len=None):
+def default_quiver_args(
+    arrow_size: Union[int, float, Tuple[int, int, int]] = 1,
+    arrow_len: Optional[Union[int, float]] = None,
+) -> Tuple[int, int, int, float]:
+    """Set the default arguments for quiver plot.
+
+    Args:
+        arrow_size: The size of the arrow. Defaults to 1.
+        arrow_len: The length of the arrow. Defaults to None.
+
+    Returns:
+        The default arguments for quiver plot.
+    """
     if isinstance(arrow_size, (list, tuple)) and len(arrow_size) == 3:
         head_w, head_l, ax_l = arrow_size
     elif type(arrow_size) in [int, float]:
@@ -1548,7 +1803,31 @@ def default_quiver_args(arrow_size, arrow_len=None):
 
 
 # ---------------------------------------------------------------------------------------------------
-def _plot_traj(y0, t, args, integration_direction, ax, color, lw, f):
+def _plot_traj(
+    y0: npt.ArrayLike,
+    t: npt.ArrayLike,
+    args: Sequence[Any],
+    integration_direction: Literal["forward", "backward", "both"],
+    ax: plt.Axes,
+    color: str,
+    lw: float,
+    f: Callable,
+) -> plt.Axes:
+    """Plot the trajectory of a vector field.
+
+    Args:
+        y0: the initial condition.
+        t: the time points for trajectory.
+        args: additional arguments to be passed to f.
+        integration_direction: Determines whether to integrate the trajectory in the forward, backward, or both
+            direction.
+        ax: the axis on which to make the plot. If None, new axis would be created.
+        color: the color of the trajectory.
+        lw: the line width of the trajectory.
+        f: the function for form f(y, t, *args). It would work as the right-hand-side of the dynamical system. Must
+            return a 2-array.
+
+    """
     _, y = integrate_vf(y0, t, args, integration_direction, f)  # integrate_vf_ivp
 
     ax.plot(*y.transpose(), color=color, lw=lw, linestyle="dashed", alpha=0.5)
@@ -1563,7 +1842,8 @@ def _plot_traj(y0, t, args, integration_direction, ax, color, lw, f):
 # ---------------------------------------------------------------------------------------------------
 
 
-def set_arrow_alpha(ax=None, alpha=1):
+def set_arrow_alpha(ax: Optional[plt.Axes] = None, alpha: float = 1) -> None:
+    """Set the alpha of the arrows in a plot."""
     from matplotlib import patches
 
     ax = plt.gca() if ax is None else ax
@@ -1576,8 +1856,11 @@ def set_arrow_alpha(ax=None, alpha=1):
         art.set_alpha(alpha)
 
 
-def set_stream_line_alpha(s=None, alpha=1):
-    """s has to be a StreamplotSet"""
+def set_stream_line_alpha(s: Optional[plt.Axes] = None, alpha: float = 1) -> None:
+    """Set the alpha of the streamlines in a plot.
+
+    s has to be a StreamplotSet.
+    """
     s.lines.set_alpha(alpha)
 
 
@@ -1668,8 +1951,8 @@ def save_show_ret(
     adjust: bool = False,
     background: Optional[str] = None,
 ):
-    """
-    Helper function that performs actions based on the variable save_show_or_return. 
+    """Helper function that performs actions based on the variable save_show_or_return.
+
     Should always have at least 3 inputs (prefix, save_show__or_return, save_kwargs).
 
     Args:
@@ -1750,6 +2033,7 @@ def retrieve_plot_save_path(
             used. Defaults to None.
         ext: the file extension. This must be supported by the active matplotlib or pyvista backend. Most backends
             support 'png', 'pdf', 'ps', 'eps', and 'svg'. Defaults to "pdf".
+
     Returns:
         The saving path.
     """
@@ -1873,7 +2157,8 @@ def save_plotly_figure(
 
 
 # ---------------------------------------------------------------------------------------------------
-def alpha_shape(x, y, alpha):
+def alpha_shape(x: np.ndarray, y: np.ndarray, alpha: float) -> Tuple:
+    """Compute the alpha shape of a set of points."""
     # Start Using SHAPELY
     try:
         import shapely.geometry as geometry
@@ -1942,7 +2227,16 @@ def alpha_shape(x, y, alpha):
 
 
 # View the polygon and adjust alpha if needed
-def plot_polygon(polygon, margin=1, fc="#999999", ec="#000000", fill=True, ax=None, **kwargs):
+def plot_polygon(
+    polygon,
+    margin: Union[float, int] = 1,
+    fc: str = "#999999",
+    ec: str ="#000000",
+    fill: bool = True,
+    ax: Optional[plt.Axes] = None,
+    **kwargs,
+) -> plt.Axes:
+    """Plot the polygon with descartes package."""
     try:
         from descartes.patch import PolygonPatch
     except ImportError:
@@ -1970,7 +2264,15 @@ def plot_polygon(polygon, margin=1, fc="#999999", ec="#000000", fill=True, ax=No
 # link: https://github.com/joaofig/pyloess/blob/master/pyloess/Loess.py
 
 
-def tricubic(x):
+def tricubic(x: np.ndarray) -> np.ndarray:
+    """Tricubic weight function.
+
+    Args:
+        x: the input array.
+
+    Returns:
+        The calculated weights.
+    """
     y = np.zeros_like(x)
     idx = (x >= -1) & (x <= 1)
     y[idx] = np.power(1.0 - np.power(np.abs(x[idx]), 3), 3)
@@ -1978,19 +2280,44 @@ def tricubic(x):
 
 
 class Loess(object):
+    """Locally weighted polynomial regression.
+
+    Each data point within the dataset will be fitted with a low-degree polynomial, considering a subset of nearby
+    data points. Weighted least squares are applied in this fitting process, assigning higher weight to neighboring
+    points and lower weight to those farther away. The regression function value for each point is subsequently derived
+    by evaluating the local polynomial using the explanatory variables specific to that data point. LOESS fit ends once
+    regression function values are computed for all n data points.
+    """
     @staticmethod
-    def normalize_array(array):
+    def normalize_array(array: np.ndarray) -> Tuple[np.ndarray, float, float]:
+        """Normalize the array."""
         min_val = np.min(array)
         max_val = np.max(array)
         return (array - min_val) / (max_val - min_val), min_val, max_val
 
-    def __init__(self, xx, yy, degree=1):
+    def __init__(self, xx: np.ndarray, yy: np.ndarray, degree: Union[float, int] = 1):
+        """Initialize the Loess object.
+
+        Args:
+            xx: The x-axis data.
+            yy: The y-axis data.
+            degree: The degree of the polynomial. Defaults to 1.
+        """
         self.n_xx, self.min_xx, self.max_xx = self.normalize_array(xx)
         self.n_yy, self.min_yy, self.max_yy = self.normalize_array(yy)
         self.degree = degree
 
     @staticmethod
-    def get_min_range(distances, window):
+    def get_min_range(distances: np.ndarray, window: int) -> np.ndarray:
+        """Get the minimum range.
+
+        Args:
+            distances: The distances array.
+            window: The window size.
+
+        Returns:
+            The minimum range.
+        """
         min_idx = np.argmin(distances)
         n = len(distances)
         if min_idx == 0:
@@ -2013,18 +2340,46 @@ class Loess(object):
         return np.array(min_range)
 
     @staticmethod
-    def get_weights(distances, min_range):
+    def get_weights(distances: np.ndarray, min_range: np.ndarray) -> np.ndarray:
+        """Get the weights.
+
+        Args:
+            distances: The distances array.
+            min_range: The minimum range.
+
+        Returns:
+            The weights.
+        """
         max_distance = np.max(distances[min_range])
         weights = tricubic(distances[min_range] / max_distance)
         return weights
 
-    def normalize_x(self, value):
+    def normalize_x(self, value: Union[float, np.ndarray]) -> Union[float, np.ndarray]:
+        """Normalize the x-axis data."""
         return (value - self.min_xx) / (self.max_xx - self.min_xx)
 
-    def denormalize_y(self, value):
+    def denormalize_y(self, value: Union[float, np.ndarray]) -> Union[float, np.ndarray]:
+        """Normalize the y-axis data."""
         return value * (self.max_yy - self.min_yy) + self.min_yy
 
-    def estimate(self, x, window, use_matrix=False, degree=1):
+    def estimate(
+        self,
+        x: Union[float, np.ndarray],
+        window: int,
+        use_matrix: bool = False,
+        degree: int = 1,
+    ) -> Union[float, np.ndarray]:
+        """Estimate the fitting results using LOESS.
+
+        Args:
+            x: The x-axis data.
+            window: The window size.
+            use_matrix: Whether to use matrix. Defaults to False.
+            degree: The degree of the polynomial. Defaults to 1.
+
+        Returns:
+            The fitting results.
+        """
         n_x = self.normalize_x(x)
         distances = np.abs(self.n_xx - n_x)
         min_range = self.get_min_range(distances, window)
