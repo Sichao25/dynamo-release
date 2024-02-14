@@ -505,30 +505,11 @@ def grid_vectors_3d():
 #
 
 
-def plot_LIC_gray(tex):
-    """GET_P estimates the posterior probability and part of the energy.
+def plot_LIC_gray(tex: np.ndarray) -> None:
+    """Plot a texture using matplotlib.
 
-    Arguments
-    ---------
-        Y: 'np.ndarray'
-            Original data.
-        V: 'np.ndarray'
-            Original data.
-        sigma2: 'float'
-            sigma2 is defined as sum(sum((Y - V)**2)) / (N * D)
-        gamma: 'float'
-            Percentage of inliers in the samples. This is an inital value for EM iteration, and it is not important.
-        a: 'float'
-            Paramerter of the model of outliers. We assume the outliers obey uniform distribution, and the volume of
-            outlier's variation space is a.
-
-    Returns
-    -------
-    P: 'np.ndarray'
-        Posterior probability, related to equation 27.
-    E: `np.ndarray'
-        Energy, related to equation 26.
-
+    Args:
+        tex: The input 2D array representing the texture.
     """
     import matplotlib.pyplot as plt
 

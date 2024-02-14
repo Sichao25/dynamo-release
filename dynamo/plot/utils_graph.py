@@ -1,6 +1,9 @@
+from typing import Any, Dict, List, Optional, Tuple, Union
+
 import matplotlib.patches as pat
 import matplotlib.pyplot as plt
 import numpy as np
+import networkx as nx
 from matplotlib.patches import ConnectionPatch
 
 from ..utils import areinstance
@@ -84,24 +87,45 @@ def plot_alternate_function(X, E, arrowstype="-|>", node_rad=5, arrow_size=10, f
 
 
 def arcplot(
-    x,
-    E,
-    node_names=None,
-    edge_threshold=0,
-    curve_radius=0.7,
-    node_rad=10,
-    width=1,
-    arrow_head=5,
-    curve_alpha=1,
-    arrow_direction=-1,
-    node_name_rotation=-45,
-    hide_frame=True,
-    edge_mode="alpha",
-    edge_pos_color="r",
-    edge_neg_color="b",
-    edge_color="k",
+    x: np.ndarray,
+    E: np.ndarray,
+    node_names: Optional[List[str]] = None,
+    edge_threshold: float = 0,
+    curve_radius: float = 0.7,
+    node_rad: float = 10,
+    width: float = 1,
+    arrow_head: float = 5,
+    curve_alpha: float = 1,
+    arrow_direction: int = -1,
+    node_name_rotation: float = -45,
+    hide_frame: bool = True,
+    edge_mode: str = "alpha",
+    edge_pos_color: str = "r",
+    edge_neg_color: str = "b",
+    edge_color: str = "k",
     **kwargs,
-):
+) -> None:
+    """Plot a matrix form network as an arc plot.
+
+    Args:
+        x: The x-coordinates of the nodes.
+        E: The adjacency matrix of the network.
+        node_names: The names of the nodes.
+        edge_threshold: The threshold to show the edge.
+        curve_radius: The radius of the curve.
+        node_rad: The radius of the node.
+        width: The width of the edge.
+        arrow_head: The size of the arrow head.
+        curve_alpha: The alpha of the curve.
+        arrow_direction: The direction of the arrow.
+        node_name_rotation: The rotation of the node name on the plot.
+        hide_frame: Whether to hide the frame.
+        edge_mode: The mode of the edge.
+        edge_pos_color: The color of the positive edge.
+        edge_neg_color: The color of the negative edge.
+        edge_color: The color of the edge.
+        **kwargs: Additional arguments.
+    """
     X = np.vstack((x, np.zeros(len(x)))).T
     plt.scatter(X[:, 0], X[:, 1], **kwargs)
 
@@ -161,7 +185,16 @@ def arcplot(
 
 
 class ArcPlot:
-    def __init__(self, x=None, E=None, network=None, node_names=None, **kwargs):
+    """The class to plot a matrix form network as an arc plot."""
+    def __init__(
+        self,
+        x: Optional[np.ndarray] = None,
+        E: Optional[np.ndarray] = None,
+        network: Optional[nx.classes.DiGraph] = None,
+        node_names: Optional[List[str]] = None,
+        **kwargs
+    ) -> None:
+        """Initialize the ArcPlot class."""
         self.x = x if x is not None else None
         self.E = E if E is not None else None
         self.node_names = node_names if node_names is not None else None
@@ -169,7 +202,8 @@ class ArcPlot:
             self.set_network(network)
         self.kwargs = kwargs
 
-    def set_network(self, network):
+    def set_network(self, network: nx.classes.DiGraph) -> None:
+        """Set the network information to the plot."""
         try:
             import networkx as nx
         except ImportError:
@@ -179,7 +213,8 @@ class ArcPlot:
         self.E = nx.to_numpy_array(network)
         self.node_names = list(network.nodes)
 
-    def compute_node_positions(self, node_order=None):
+    def compute_node_positions(self, node_order: Optional[Union[str, np.ndarray]] = None) -> None:
+        """Compute the node positions."""
         if self.E is None:
             raise Exception("The adjacency matrix is not set.")
 
@@ -193,7 +228,8 @@ class ArcPlot:
             else:
                 self.x = np.argsort(node_order)
 
-    def draw(self, node_order=None):
+    def draw(self, node_order: Optional[Union[str, np.ndarray]] = None) -> None:
+        """Draw the arc plot."""
         if self.x is None:
             self.compute_node_positions(node_order=node_order)
         arcplot(self.x, self.E, node_names=self.node_names, **self.kwargs)

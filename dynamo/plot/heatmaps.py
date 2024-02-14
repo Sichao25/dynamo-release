@@ -9,6 +9,7 @@ except ImportError:
     from typing_extensions import Literal
 
 import numpy as np
+import numpy.typing as npt
 import pandas as pd
 import scipy.spatial as ss
 import seaborn
@@ -41,7 +42,15 @@ from .utils import (
 )
 
 
-def bandwidth_nrd(x):
+def bandwidth_nrd(x: np.ndarray) -> float:
+    """Compute bandwidth using the normal reference rule.
+
+    Args:
+        x: a 1-d array of data.
+
+    Returns:
+        The bandwidth.
+    """
     x = pd.Series(x)
     h = (x.quantile([0.75]).values - x.quantile([0.25]).values) / 1.34
 
@@ -49,7 +58,16 @@ def bandwidth_nrd(x):
     return np.asscalar(res) if isinstance(res, np.ndarray) else res
 
 
-def rep(x, length):
+def rep(x: List, length: int) -> List:
+    """Repeat elements of the input list x to achieve the desired length.
+
+    Args:
+        x: The input list of elements to be repeated.
+        length: The desired length of the output list.
+
+    Returns:
+        A list containing elements of x repeated to match the desired length.
+    """
     len_x = len(x)
     n = int(length / len_x)
     r = length % len_x
@@ -69,11 +87,30 @@ def rep(x, length):
 #     return res
 
 
-def rep2(x, length_out):
+def rep2(x: npt.ArrayLike, length_out: int) -> np.ndarray:
+    """Repeat elements of the input array x to achieve the desired length.
+
+    Args:
+        x: The input array-like object of elements to be repeated.
+        length_out: The desired length of the output array.
+
+    Returns:
+        An array containing elements of x repeated to match the desired length.
+    """
     return np.tile(x, length_out // len(x) + 1)[:length_out]
 
 
-def dnorm(x, u=0, sig=1):
+def dnorm(x: Union[float, npt.ArrayLike], u: float = 0, sig: float = 1):
+    """Compute the density of the normal distribution.
+
+    Args:
+        x: The input value or array of values.
+        u: The mean of the normal distribution. Defaults to 0.
+        sig: The standard deviation of the normal distribution. Defaults to 1.
+
+    Returns:
+        The density of the normal distribution at the input value or array of values.
+    """
     return np.exp(-((x - u) ** 2) / (2 * sig**2)) / (math.sqrt(2 * math.pi) * sig)
 
 

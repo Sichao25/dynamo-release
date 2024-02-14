@@ -452,35 +452,27 @@ def kinetic_heatmap(
     return save_show_ret("kinetic_heatmap", save_show_or_return, save_kwargs, sns_heatmap, adjust = show_colorbar)
 
 
-def _half_max_ordering(exprs, time, mode, interpolate=False, spaced_num=100):
+def _half_max_ordering(
+    exprs: np.ndarray, time: np.ndarray, mode: str, interpolate: bool = False, spaced_num: int = 100,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Implement the half-max ordering algorithm from HA Pliner, Molecular Cell, 2018.
 
-    Parameters
-    ----------
-        exprs: `np.ndarray`
-            The gene expression matrix (ngenes x ncells) ordered along time (either pseudotime or inferred real time).
-        time: `np.ndarray`
-            Pseudotime or inferred real time.
-        mode: `str` (default: `vector_field`)
-            Which data mode will be used, either vector_field or pseudotime. if mode is vector_field, the trajectory
+    Args:
+        exprs: The gene expression matrix (ngenes x ncells) ordered along time (either pseudotime or inferred real time).
+        time: Pseudotime or inferred real time.
+        mode: Which data mode will be used, either vector_field or pseudotime. if mode is vector_field, the trajectory
             predicted by vector field function will be used, otherwise pseudotime trajectory (defined by time argument)
             will be used.
-        interpolate: `bool` (default: `False`)
-            Whether to interpolate the data when performing the loess fitting.
-        spaced_num: `float` (default: `100`)
-            The number of points on the loess fitting curve.
+        interpolate: Whether to interpolate the data when performing the loess fitting.
+        spaced_num: The number of points on the loess fitting curve.
 
-    Returns
-    -------
-        time: `np.ndarray`
-            The time at which the loess is evaluated.
-        all: `np.ndarray`
-            The ordered smoothed, scaled expression matrix, the first group is up, then down, followed by the transient
-            gene groups.
-        valid_ind: `np.ndarray`
-            The indices of valid genes that Loess smoothed.
-        gene_idx: `np.ndarray`
-            The indices of genes that are used for the half-max ordering plot.
+    Returns:
+        A tuple containing:
+            time: The time at which the loess is evaluated.
+            all: The ordered smoothed, scaled expression matrix, the first group is up, then down, followed by the
+                transient gene groups.
+            valid_ind: The indices of valid genes that Loess smoothed.
+            gene_idx: The indices of genes that are used for the half-max ordering plot.
     """
 
     if mode == "vector_field":
@@ -565,7 +557,20 @@ def _half_max_ordering(exprs, time, mode, interpolate=False, spaced_num=100):
     return time, all, np.isfinite(nt[:, 0]) & np.isfinite(nt[:, -1]), gene_idx
 
 
-def lowess_smoother(time, exprs, spaced_num=None, n_convolve=30):
+def lowess_smoother(
+    time: np.ndarray, exprs: np.ndarray, spaced_num: Optional[int] = None, n_convolve: Optional[int] = 30
+) -> np.ndarray:
+    """Perform lowess smoothing on the gene expression matrix.
+
+    Args:
+        time: Pseudotime or inferred real time.
+        exprs: The gene expression matrix (ngenes x ncells) ordered along time (either pseudotime or inferred real time).
+        spaced_num: The number of points on the loess fitting curve. Defaults to None.
+        n_convolve: The number of cells for convolution. Defaults to 30.
+
+    Returns:
+        The smoothed gene expression matrix.
+    """
     gene_num = exprs.shape[0]
     if spaced_num is None:
         res = exprs.copy()

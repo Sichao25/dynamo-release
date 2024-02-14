@@ -16,7 +16,29 @@ from .utils import save_show_ret
 docstrings.delete_params("scatters.parameters", "aggregate", "kwargs", "save_kwargs")
 
 
-def create_edge_patch(posA, posB, width=1, node_rad=0, connectionstyle="arc3, rad=0.25", facecolor="k", **kwargs):
+def create_edge_patch(
+    posA: Tuple[float, float],
+    posB: Tuple[float, float],
+    width: float = 1,
+    node_rad: float = 0,
+    connectionstyle: str = "arc3, rad=0.25",
+    facecolor: str = "k",
+    **kwargs,
+):
+    """Create a FancyArrowPatch representing an edge between two points.
+
+    Args:
+        posA: The position of the starting point of the edge.
+        posB: The position of the ending point of the edge.
+        width: The width of the edge. Default is 1.
+        node_rad: The radius of the node connected to the edge. Default is 0.
+        connectionstyle: The style of connection between the edge and nodes.
+        facecolor: The color of the edge.
+        **kwargs: Additional keyword arguments to be passed to the FancyArrowPatch constructor.
+
+    Returns:
+        A FancyArrowPatch object.
+    """
     import matplotlib.patches as pat
 
     style = "simple,head_length=%d,head_width=%d,tail_width=%d" % (
@@ -37,20 +59,34 @@ def create_edge_patch(posA, posB, width=1, node_rad=0, connectionstyle="arc3, ra
 
 
 def create_edge_patches_from_markov_chain(
-    P,
-    X,
-    width=3,
-    node_rad=0,
-    tol=1e-7,
-    connectionstyle="arc3, rad=0.25",
-    facecolor="k",
-    edgecolor="k",
-    alpha=0.8,
+    P: np.ndarray,
+    X: np.ndarray,
+    width: float = 3,
+    node_rad: float = 0,
+    tol: float = 1e-7,
+    connectionstyle: str = "arc3, rad=0.25",
+    facecolor: str = "k",
+    edgecolor: str = "k",
+    alpha: float = 0.8,
     **kwargs
-):
-    """
-    create edge patches from a markov chain transition matrix. If P[i, j] > tol, an arrow is created from
+) -> List:
+    """Create edge patches from a markov chain transition matrix. If P[i, j] > tol, an arrow is created from
     node i to j.
+
+    Args:
+        P: The transition matrix.
+        X: The positions of the nodes.
+        width: The width of the edges. Default is 3.
+        node_rad: The radius of the nodes. Default is 0.
+        tol: The tolerance for the transition matrix. Default is 1e-7.
+        connectionstyle: The style of connection between the edge and nodes. Default is "arc3, rad=0.25".
+        facecolor: The color of the edges. Default is "k".
+        edgecolor: The color of the edges. Default is "k".
+        alpha: The transparency of the edges. Default is 0.8.
+        **kwargs: Additional keyword arguments to be passed to the create_edge_patch function.
+
+    Returns:
+        A list of FancyArrowPatch objects.
     """
     arrows = []
     for i in range(P.shape[0]):
