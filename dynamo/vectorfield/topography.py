@@ -31,366 +31,105 @@ from .utils import (
 )
 
 
-def pac_onestep(x0: np.ndarray, func: Callable, v0: np.ndarray, ds: float = 0.01):
-    """One step of the predictor-corrector method
+def topography(
+    adata: AnnData,
+    basis: Optional[str] = "umap",
+    layer: Optional[str] = None,
+    X: Optional[np.ndarray] = None,
+    dims: Optional[list] = None,
+    n: Optional[int] = 25,
+    VecFld: Optional[VecFldDict] = None,
+    **kwargs,
+) -> AnnData:
+    """Map the topography of the single cell vector field in (first) two or three dimensions.
 
     Args:
-        x0: current value
-        func: function to be integrated
-        v0: tangent predictor
-        ds: step size, Defaults to 0.01.
+        adata: an AnnData object.
+        basis: The reduced dimension embedding of cells to visualize.
+        layer: Which layer of the data will be used for vector field function reconstruction. This will be used in
+            conjunction with X.
+        X: Original data. Not used
+        dims: The dimensions that will be used for vector field reconstruction.
+        n: Number of samples for calculating the fixed points.
+        VecFld: The reconstructed vector field function.
+        kwargs: Key word arguments passed to the find_fixed_point function of the vector field class for high dimension
+        fixed point identification.
 
     Returns:
-        x1: next value
+        `AnnData` object that is updated with the `VecFld` or 'VecFld_' + basis dictionary in the `uns` attribute.
+        The `VecFld2D` key stores an instance of the VectorField2D class which presumably has fixed points, nullcline,
+            separatrix, computed and stored.
     """
-    x01 = x0 + v0 * ds
 
-    def F(x):
-        return np.array([func(x), (x - x0).dot(v0) - ds])
-
-    x1 = fsolve(F, x01)
-    return x1
-
-
-def continuation(
-    x0: np.ndarray,
-    func: Callable,
-    s_max: float,
-    ds: float = 0.01,
-    v0: Optional[np.ndarray] = None,
-    param_axis: int = 0,
-    param_direction: int = 1,
-) -> np.ndarray:
-    """Continually integrate the ODE `func` from x0
-
-    Args:
-        x0: initial value
-        func: function to be integrated
-        s_max: maximum integration length
-        ds: step size, Defaults to 0.01.
-        v0: initial tangent vector, Defaults to None.
-        param_axis: axis of the parameter, Defaults to 0.
-        param_direction: direction of the parameter, Defaults to 1.
-
-    Returns:
-        np.ndarray of values along the curve
-    """
-    ret = [x0]
-    if v0 is None:  # initialize tangent predictor
-        v = np.zeros_like(x0)
-        v[param_axis] = param_direction
+    if VecFld is None:
+        VecFld, func = vecfld_from_adata(adata, basis)
     else:
-        v = v0
-    s = 0
-    while s <= s_max:
-        x1 = ret[-1]
-        x = pac_onestep(x1, func, v, ds)
-        ret.append(x)
-        s += ds
+        if "velocity_loss_traj" in VecFld.keys():
 
-        # compute tangent predictor
-        v = x - x1
-        v /= np.linalg.norm(v)
-    return np.array(ret)
+            def func(x):
+                return dynode_vector_field_function(x, VecFld)
 
-
-def clip_curves(
-    curves: Union[List[List], List[np.ndarray]], domain: np.ndarray, tol_discont=None
-) -> Union[List[List], List[np.ndarray]]:
-    """Clip curves to the domain
-
-    Args:
-        curves: list of curves
-        domain: domain of the curves of dimension n x 2
-        tol_discont: tolerance for discontinuity, Defaults to None.
-
-    Returns:
-        list of clipped curves joined together
-    """
-    ret = []
-    for cur in curves:
-        clip_away = np.zeros(len(cur), dtype=bool)
-        for i, p in enumerate(cur):
-            for j in range(len(domain)):
-                if p[j] < domain[j][0] or p[j] > domain[j][1]:
-                    clip_away[i] = True
-                    break
-            if tol_discont is not None and i > 0:
-                d = np.linalg.norm(p - cur[i - 1])
-                if d > tol_discont:
-                    clip_away[i] = True
-        # clip curve and assemble
-        i_start = 0
-        while i_start < len(cur) - 1:
-            if not clip_away[i_start]:
-                for i_end in range(i_start, len(cur)):
-                    if clip_away[i_end]:
-                        break
-                # a tiny bit of the end could be chopped off
-                ret.append(cur[i_start:i_end])
-                i_start = i_end
-            else:
-                i_start += 1
-    return ret
-
-
-def compute_nullclines_2d(
-    X0: Union[List, np.ndarray],
-    fdx: Callable,
-    fdy: Callable,
-    x_range: List,
-    y_range: List,
-    s_max: Optional[float] = None,
-    ds: Optional[float] = None,
-) -> Tuple[List]:
-    """Compute nullclines of a 2D vector field. Nullclines are curves along which vector field is zero in either the x or y direction.
-
-    Args:
-        X0: initial value
-        fdx: differential equation for x
-        fdy: differential equation for y
-        x_range: range of x
-        y_range: range of y
-        s_max: maximum integration length, Defaults to None.
-        ds: step size, Defaults to None.
-
-    Returns:
-        Tuple of nullclines in x and y
-    """
-    if s_max is None:
-        s_max = 5 * ((x_range[1] - x_range[0]) + (y_range[1] - y_range[0]))
-    if ds is None:
-        ds = s_max / 1e3
-
-    NCx = []
-    NCy = []
-    for x0 in X0:
-        # initialize tangent predictor
-        theta = np.random.rand() * 2 * np.pi
-        v0 = [np.cos(theta), np.sin(theta)]
-        v0 /= np.linalg.norm(v0)
-        # nullcline continuation
-        NCx.append(continuation(x0, fdx, s_max, ds, v0=v0))
-        NCx.append(continuation(x0, fdx, s_max, ds, v0=-v0))
-        NCy.append(continuation(x0, fdy, s_max, ds, v0=v0))
-        NCy.append(continuation(x0, fdy, s_max, ds, v0=-v0))
-    NCx = clip_curves(NCx, [x_range, y_range], ds * 10)
-    NCy = clip_curves(NCy, [x_range, y_range], ds * 10)
-    return NCx, NCy
-
-
-def compute_separatrices(
-    Xss: np.ndarray,
-    Js: np.ndarray,
-    func: Callable,
-    x_range: List,
-    y_range: List,
-    t: int = 50,
-    n_sample: int = 500,
-    eps: float = 1e-6,
-) -> List:
-    """Compute separatrix based on jacobians at points in `Xss`
-
-    Args:
-        Xss: list of steady states
-        Js: list of jacobians at steady states
-        func: function to be integrated
-        x_range: range of x
-        y_range: range of y
-        t: integration time, Defaults to 50.
-        n_sample: number of samples, Defaults to 500.
-        eps: tolerance for discontinuity, Defaults to 1e-6.
-
-    Returns:
-        list of separatrices
-    """
-    ret = []
-    for i, x in enumerate(Xss):
-        print(x)
-        J = Js[i]
-        w, v = eig(J)
-        I_stable = np.where(np.real(w) < 0)[0]
-        print(I_stable)
-        for j in I_stable:  # I_unstable
-            u = np.real(v[j])
-            u = u / np.linalg.norm(u)
-            print("u=%f, %f" % (u[0], u[1]))
-
-            # Parameters for building separatrix
-            T = np.linspace(0, t, n_sample)
-            # all_sep_a, all_sep_b = None, None
-            # Build upper right branch of separatrix
-            ab_upper = odeint(lambda x, _: -func(x), x + eps * u, T)
-            # Build lower left branch of separatrix
-            ab_lower = odeint(lambda x, _: -func(x), x - eps * u, T)
-
-            sep = np.vstack((ab_lower[::-1], ab_upper))
-            ret.append(sep)
-    ret = clip_curves(ret, [x_range, y_range])
-    return ret
-
-
-def set_test_points_on_curve(curve: List[np.ndarray], interval: float) -> np.ndarray:
-    """Generates an np.ndarray of test points that are spaced out by `interval` distance
-
-    Args:
-        curve: list of points
-        interval: distance for separation
-
-    Returns:
-        np.ndarray of test points
-    """
-    P = [curve[0]]
-    dist = 0
-    for i in range(1, len(curve)):
-        dist += np.linalg.norm(curve[i] - curve[i - 1])
-        if dist >= interval:
-            P.append(curve[i])
-            dist = 0
-    return np.array(P)
-
-
-def find_intersection_2d(curve1: List[np.ndarray], curve2: List[np.ndarray], tol_redundant: float = 1e-4) -> np.ndarray:
-    """Compute intersections between curve 1 and curve2
-
-    Args:
-        curve1: list of points
-        curve2: list of points
-        tol_redundant: Defaults to 1e-4.
-
-    Returns:
-        np.ndarray of intersection points between curve1 and curve2
-    """
-    P = []
-    for i in range(len(curve1) - 1):
-        for j in range(len(curve2) - 1):
-            p1 = curve1[i]
-            p2 = curve1[i + 1]
-            p3 = curve2[j]
-            p4 = curve2[j + 1]
-            denom = np.linalg.det([p1 - p2, p3 - p4])
-            if denom != 0:
-                t = np.linalg.det([p1 - p3, p3 - p4]) / denom
-                u = -np.linalg.det([p1 - p2, p1 - p3]) / denom
-                if t >= 0 and t <= 1 and u >= 0 and u <= 1:
-                    P.append(p1 + t * (p2 - p1))
-    if tol_redundant is not None:
-        remove_redundant_points(P, tol=tol_redundant)
-    return np.array(P)
-
-
-def find_fixed_points_nullcline(
-    func: Callable,
-    NCx: List[List[np.ndarray]],
-    NCy: List[List[np.ndarray]],
-    sample_interval: float = 0.5,
-    tol_redundant: float = 1e-4,
-) -> Tuple[np.ndarray, np.ndarray]:
-    """Find fixed points by computing the intersections of x and y nullclines using `find_intersection_2d` and passing these intersection points as samppling points to `find_fixed_points`.
-
-    Args:
-        func: Callable passed to `find_fixed_points` along with the intersection points of the two nullclines
-        NCx: List of x nullcline
-        NCy: List of y nullcline
-        sample_interval: Interval for sampling test points along x and y nullclines. Defaults to 0.5.
-        tol_redundant: Defaults to 1e-4.
-
-    Returns:
-        A tuple with solutions for where func(x) = 0 and the Jacobian matrix
-    """
-    test_Px = []
-    for i in range(len(NCx)):
-        test_Px.append(set_test_points_on_curve(NCx[i], sample_interval))
-
-    test_Py = []
-    for i in range(len(NCy)):
-        test_Py.append(set_test_points_on_curve(NCy[i], sample_interval))
-
-    int_P = []
-    for i in range(len(test_Px)):
-        for j in range(len(test_Py)):
-            p = find_intersection_2d(test_Px[i], test_Py[j], tol_redundant)
-            for k in range(len(p)):
-                int_P.append(p[k])
-    int_P = np.array(int_P)
-    P, J, _ = find_fixed_points(int_P, func, tol_redundant=tol_redundant)
-    return P, J
-
-
-def calc_fft(x):
-    out = np.fft.rfft(x)
-    n = len(x)
-    xFFT = abs(out) / n * 2
-    freq = np.arange(int(n / 2)) / n
-    return xFFT[: int(n / 2)], freq
-
-
-def dup_osc_idx(x: np.ndarray, n_dom: int = 3, tol: float = 0.05):
-    """
-    Find the index of the end of the first division in an array where the oscillatory patterns of two consecutive divisions are similar within a given tolerance.
-
-    Args:
-        x: An array-like object containing the data to be analyzed.
-        n_dom: An integer specifying the number of divisions to make in the array. Defaults to 3.
-        tol: A float specifying the tolerance for considering the oscillatory patterns of two divisions to be similar. Defaults to 0.05.
-
-    Returns:
-        A tuple containing the index of the end of the first division and the difference between the FFTs of the two divisions. If the oscillatory patterns of the two divisions are not similar within the given tolerance, returns (None, None).
-    """
-    l_int = int(np.floor(len(x) / n_dom))
-    ind_a, ind_b = np.arange((n_dom - 2) * l_int, (n_dom - 1) * l_int), np.arange((n_dom - 1) * l_int, n_dom * l_int)
-    y1 = x[ind_a]
-    y2 = x[ind_b]
-
-    def calc_fft_k(x):
-        ret = []
-        for k in range(x.shape[1]):
-            xFFT, _ = calc_fft(x[:, k])
-            ret.append(xFFT[1:])
-        return np.hstack(ret)
-
-    try:
-        xFFt1 = calc_fft_k(y1)
-        xFFt2 = calc_fft_k(y2)
-    except ValueError:
-        print("calc_fft_k run failed...")
-        return None, None
-
-    diff = np.linalg.norm(xFFt1 - xFFt2) / len(xFFt1)
-    if diff <= tol:
-        idx = (n_dom - 1) * l_int
-    else:
-        idx = None
-    return idx, diff
-
-
-def dup_osc_idx_iter(x: np.ndarray, max_iter: int = 5, **kwargs) -> Tuple[int, np.ndarray]:
-    """
-    Find the index of the end of the first division in an array where the oscillatory patterns of two consecutive divisions are similar within a given tolerance, using iterative search.
-
-    Args:
-        x: An array-like object containing the data to be analyzed.
-        max_iter: An integer specifying the maximum number of iterations to perform. Defaults to 5.
-
-    Returns:
-        A tuple containing the index of the end of the first division and an array of differences between the FFTs of consecutive divisions. If the oscillatory patterns of the two divisions are not similar within the given tolerance after the maximum number of iterations, returns the index and array from the final iteration.
-    """
-    stop = False
-    idx = len(x)
-    j = 0
-    D = []
-    while not stop:
-        i, d = dup_osc_idx(x[:idx], **kwargs)
-        D.append(d)
-        if i is None:
-            stop = True
         else:
-            idx = i
-        j += 1
-        if j >= max_iter or idx == 0:
-            stop = True
-    D = np.array(D)
-    return idx, D
+
+            def func(x):
+                return vector_field_function(x, VecFld)
+
+    if dims is None:
+        dims = np.arange(adata.obsm["X_" + basis].shape[1])
+
+    (
+        X_basis,
+        xlim,
+        ylim,
+        zlim,
+        confidence,
+        NCx,
+        NCy,
+        Xss,
+        ftype,
+        fp_ind,
+    ) = util_topology(adata=adata, basis=basis, X=X, dims=dims, func=func, VecFld=VecFld, n=n, *kwargs)
+
+    # commented for now, will go back to this later.
+    # sep = compute_separatrices(vecfld.Xss.get_X(), vecfld.Xss.get_J(), vecfld.func, xlim, ylim)
+
+    if layer is None:
+        vf_key = "VecFld_" + basis
+    else:
+        vf_key = "VecFld" if layer == "X" else "VecFld_" + layer
+
+    if vf_key in adata.uns_keys():
+        adata.uns[vf_key].update(
+            {
+                "xlim": xlim,
+                "ylim": ylim,
+                "zlim": zlim,
+                "X_data": X_basis,
+                "Xss": Xss,
+                "ftype": ftype,
+                "confidence": confidence,
+                "NCx": {str(index): array for index, array in enumerate(NCx)} if NCx is not None else None,
+                "NCy": {str(index): array for index, array in enumerate(NCy)} if NCy is not None else None,
+                "separatrices": None,
+                "fp_ind": fp_ind,
+            }
+        )
+    else:
+        adata.uns[vf_key] = {
+            "xlim": xlim,
+            "ylim": ylim,
+            "zlim": zlim,
+            "X_data": X_basis,
+            "Xss": Xss,
+            "ftype": ftype,
+            "confidence": confidence,
+            "NCx": {str(index): array for index, array in enumerate(NCx)} if NCx is not None else None,
+            "NCy": {str(index): array for index, array in enumerate(NCy)} if NCy is not None else None,
+            "separatrices": None,
+            "fp_ind": fp_ind,
+        }
+
+    return adata
 
 
 class Topography2D:
@@ -803,107 +542,6 @@ def util_topology(
     return X_basis, xlim, ylim, zlim, confidence, NCx, NCy, Xss, ftype, fp_ind
 
 
-def topography(
-    adata: AnnData,
-    basis: Optional[str] = "umap",
-    layer: Optional[str] = None,
-    X: Optional[np.ndarray] = None,
-    dims: Optional[list] = None,
-    n: Optional[int] = 25,
-    VecFld: Optional[VecFldDict] = None,
-    **kwargs,
-) -> AnnData:
-    """Map the topography of the single cell vector field in (first) two or three dimensions.
-
-    Args:
-        adata: an AnnData object.
-        basis: The reduced dimension embedding of cells to visualize.
-        layer: Which layer of the data will be used for vector field function reconstruction. This will be used in
-            conjunction with X.
-        X: Original data. Not used
-        dims: The dimensions that will be used for vector field reconstruction.
-        n: Number of samples for calculating the fixed points.
-        VecFld: The reconstructed vector field function.
-        kwargs: Key word arguments passed to the find_fixed_point function of the vector field class for high dimension
-        fixed point identification.
-
-    Returns:
-        `AnnData` object that is updated with the `VecFld` or 'VecFld_' + basis dictionary in the `uns` attribute.
-        The `VecFld2D` key stores an instance of the VectorField2D class which presumably has fixed points, nullcline,
-            separatrix, computed and stored.
-    """
-
-    if VecFld is None:
-        VecFld, func = vecfld_from_adata(adata, basis)
-    else:
-        if "velocity_loss_traj" in VecFld.keys():
-
-            def func(x):
-                return dynode_vector_field_function(x, VecFld)
-
-        else:
-
-            def func(x):
-                return vector_field_function(x, VecFld)
-
-    if dims is None:
-        dims = np.arange(adata.obsm["X_" + basis].shape[1])
-
-    (
-        X_basis,
-        xlim,
-        ylim,
-        zlim,
-        confidence,
-        NCx,
-        NCy,
-        Xss,
-        ftype,
-        fp_ind,
-    ) = util_topology(adata=adata, basis=basis, X=X, dims=dims, func=func, VecFld=VecFld, n=n, *kwargs)
-
-    # commented for now, will go back to this later.
-    # sep = compute_separatrices(vecfld.Xss.get_X(), vecfld.Xss.get_J(), vecfld.func, xlim, ylim)
-
-    if layer is None:
-        vf_key = "VecFld_" + basis
-    else:
-        vf_key = "VecFld" if layer == "X" else "VecFld_" + layer
-
-    if vf_key in adata.uns_keys():
-        adata.uns[vf_key].update(
-            {
-                "xlim": xlim,
-                "ylim": ylim,
-                "zlim": zlim,
-                "X_data": X_basis,
-                "Xss": Xss,
-                "ftype": ftype,
-                "confidence": confidence,
-                "NCx": {str(index): array for index, array in enumerate(NCx)} if NCx is not None else None,
-                "NCy": {str(index): array for index, array in enumerate(NCy)} if NCy is not None else None,
-                "separatrices": None,
-                "fp_ind": fp_ind,
-            }
-        )
-    else:
-        adata.uns[vf_key] = {
-            "xlim": xlim,
-            "ylim": ylim,
-            "zlim": zlim,
-            "X_data": X_basis,
-            "Xss": Xss,
-            "ftype": ftype,
-            "confidence": confidence,
-            "NCx": {str(index): array for index, array in enumerate(NCx)} if NCx is not None else None,
-            "NCy": {str(index): array for index, array in enumerate(NCy)} if NCy is not None else None,
-            "separatrices": None,
-            "fp_ind": fp_ind,
-        }
-
-    return adata
-
-
 def assign_fixedpoints(
     adata: AnnData,
     basis: str = "pca",
@@ -955,3 +593,365 @@ def assign_fixedpoints(
     if copy:
         return adata
     return None
+
+
+def pac_onestep(x0: np.ndarray, func: Callable, v0: np.ndarray, ds: float = 0.01):
+    """One step of the predictor-corrector method
+
+    Args:
+        x0: current value
+        func: function to be integrated
+        v0: tangent predictor
+        ds: step size, Defaults to 0.01.
+
+    Returns:
+        x1: next value
+    """
+    x01 = x0 + v0 * ds
+
+    def F(x):
+        return np.array([func(x), (x - x0).dot(v0) - ds])
+
+    x1 = fsolve(F, x01)
+    return x1
+
+
+def continuation(
+    x0: np.ndarray,
+    func: Callable,
+    s_max: float,
+    ds: float = 0.01,
+    v0: Optional[np.ndarray] = None,
+    param_axis: int = 0,
+    param_direction: int = 1,
+) -> np.ndarray:
+    """Continually integrate the ODE `func` from x0
+
+    Args:
+        x0: initial value
+        func: function to be integrated
+        s_max: maximum integration length
+        ds: step size, Defaults to 0.01.
+        v0: initial tangent vector, Defaults to None.
+        param_axis: axis of the parameter, Defaults to 0.
+        param_direction: direction of the parameter, Defaults to 1.
+
+    Returns:
+        np.ndarray of values along the curve
+    """
+    ret = [x0]
+    if v0 is None:  # initialize tangent predictor
+        v = np.zeros_like(x0)
+        v[param_axis] = param_direction
+    else:
+        v = v0
+    s = 0
+    while s <= s_max:
+        x1 = ret[-1]
+        x = pac_onestep(x1, func, v, ds)
+        ret.append(x)
+        s += ds
+
+        # compute tangent predictor
+        v = x - x1
+        v /= np.linalg.norm(v)
+    return np.array(ret)
+
+
+def clip_curves(
+    curves: Union[List[List], List[np.ndarray]], domain: np.ndarray, tol_discont=None
+) -> Union[List[List], List[np.ndarray]]:
+    """Clip curves to the domain
+
+    Args:
+        curves: list of curves
+        domain: domain of the curves of dimension n x 2
+        tol_discont: tolerance for discontinuity, Defaults to None.
+
+    Returns:
+        list of clipped curves joined together
+    """
+    ret = []
+    for cur in curves:
+        clip_away = np.zeros(len(cur), dtype=bool)
+        for i, p in enumerate(cur):
+            for j in range(len(domain)):
+                if p[j] < domain[j][0] or p[j] > domain[j][1]:
+                    clip_away[i] = True
+                    break
+            if tol_discont is not None and i > 0:
+                d = np.linalg.norm(p - cur[i - 1])
+                if d > tol_discont:
+                    clip_away[i] = True
+        # clip curve and assemble
+        i_start = 0
+        while i_start < len(cur) - 1:
+            if not clip_away[i_start]:
+                for i_end in range(i_start, len(cur)):
+                    if clip_away[i_end]:
+                        break
+                # a tiny bit of the end could be chopped off
+                ret.append(cur[i_start:i_end])
+                i_start = i_end
+            else:
+                i_start += 1
+    return ret
+
+
+def compute_nullclines_2d(
+    X0: Union[List, np.ndarray],
+    fdx: Callable,
+    fdy: Callable,
+    x_range: List,
+    y_range: List,
+    s_max: Optional[float] = None,
+    ds: Optional[float] = None,
+) -> Tuple[List]:
+    """Compute nullclines of a 2D vector field. Nullclines are curves along which vector field is zero in either the x or y direction.
+
+    Args:
+        X0: initial value
+        fdx: differential equation for x
+        fdy: differential equation for y
+        x_range: range of x
+        y_range: range of y
+        s_max: maximum integration length, Defaults to None.
+        ds: step size, Defaults to None.
+
+    Returns:
+        Tuple of nullclines in x and y
+    """
+    if s_max is None:
+        s_max = 5 * ((x_range[1] - x_range[0]) + (y_range[1] - y_range[0]))
+    if ds is None:
+        ds = s_max / 1e3
+
+    NCx = []
+    NCy = []
+    for x0 in X0:
+        # initialize tangent predictor
+        theta = np.random.rand() * 2 * np.pi
+        v0 = [np.cos(theta), np.sin(theta)]
+        v0 /= np.linalg.norm(v0)
+        # nullcline continuation
+        NCx.append(continuation(x0, fdx, s_max, ds, v0=v0))
+        NCx.append(continuation(x0, fdx, s_max, ds, v0=-v0))
+        NCy.append(continuation(x0, fdy, s_max, ds, v0=v0))
+        NCy.append(continuation(x0, fdy, s_max, ds, v0=-v0))
+    NCx = clip_curves(NCx, [x_range, y_range], ds * 10)
+    NCy = clip_curves(NCy, [x_range, y_range], ds * 10)
+    return NCx, NCy
+
+
+def compute_separatrices(
+    Xss: np.ndarray,
+    Js: np.ndarray,
+    func: Callable,
+    x_range: List,
+    y_range: List,
+    t: int = 50,
+    n_sample: int = 500,
+    eps: float = 1e-6,
+) -> List:
+    """Compute separatrix based on jacobians at points in `Xss`
+
+    Args:
+        Xss: list of steady states
+        Js: list of jacobians at steady states
+        func: function to be integrated
+        x_range: range of x
+        y_range: range of y
+        t: integration time, Defaults to 50.
+        n_sample: number of samples, Defaults to 500.
+        eps: tolerance for discontinuity, Defaults to 1e-6.
+
+    Returns:
+        list of separatrices
+    """
+    ret = []
+    for i, x in enumerate(Xss):
+        print(x)
+        J = Js[i]
+        w, v = eig(J)
+        I_stable = np.where(np.real(w) < 0)[0]
+        print(I_stable)
+        for j in I_stable:  # I_unstable
+            u = np.real(v[j])
+            u = u / np.linalg.norm(u)
+            print("u=%f, %f" % (u[0], u[1]))
+
+            # Parameters for building separatrix
+            T = np.linspace(0, t, n_sample)
+            # all_sep_a, all_sep_b = None, None
+            # Build upper right branch of separatrix
+            ab_upper = odeint(lambda x, _: -func(x), x + eps * u, T)
+            # Build lower left branch of separatrix
+            ab_lower = odeint(lambda x, _: -func(x), x - eps * u, T)
+
+            sep = np.vstack((ab_lower[::-1], ab_upper))
+            ret.append(sep)
+    ret = clip_curves(ret, [x_range, y_range])
+    return ret
+
+
+def set_test_points_on_curve(curve: List[np.ndarray], interval: float) -> np.ndarray:
+    """Generates an np.ndarray of test points that are spaced out by `interval` distance
+
+    Args:
+        curve: list of points
+        interval: distance for separation
+
+    Returns:
+        np.ndarray of test points
+    """
+    P = [curve[0]]
+    dist = 0
+    for i in range(1, len(curve)):
+        dist += np.linalg.norm(curve[i] - curve[i - 1])
+        if dist >= interval:
+            P.append(curve[i])
+            dist = 0
+    return np.array(P)
+
+
+def find_intersection_2d(curve1: List[np.ndarray], curve2: List[np.ndarray], tol_redundant: float = 1e-4) -> np.ndarray:
+    """Compute intersections between curve 1 and curve2
+
+    Args:
+        curve1: list of points
+        curve2: list of points
+        tol_redundant: Defaults to 1e-4.
+
+    Returns:
+        np.ndarray of intersection points between curve1 and curve2
+    """
+    P = []
+    for i in range(len(curve1) - 1):
+        for j in range(len(curve2) - 1):
+            p1 = curve1[i]
+            p2 = curve1[i + 1]
+            p3 = curve2[j]
+            p4 = curve2[j + 1]
+            denom = np.linalg.det([p1 - p2, p3 - p4])
+            if denom != 0:
+                t = np.linalg.det([p1 - p3, p3 - p4]) / denom
+                u = -np.linalg.det([p1 - p2, p1 - p3]) / denom
+                if t >= 0 and t <= 1 and u >= 0 and u <= 1:
+                    P.append(p1 + t * (p2 - p1))
+    if tol_redundant is not None:
+        remove_redundant_points(P, tol=tol_redundant)
+    return np.array(P)
+
+
+def find_fixed_points_nullcline(
+    func: Callable,
+    NCx: List[List[np.ndarray]],
+    NCy: List[List[np.ndarray]],
+    sample_interval: float = 0.5,
+    tol_redundant: float = 1e-4,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Find fixed points by computing the intersections of x and y nullclines using `find_intersection_2d` and passing these intersection points as samppling points to `find_fixed_points`.
+
+    Args:
+        func: Callable passed to `find_fixed_points` along with the intersection points of the two nullclines
+        NCx: List of x nullcline
+        NCy: List of y nullcline
+        sample_interval: Interval for sampling test points along x and y nullclines. Defaults to 0.5.
+        tol_redundant: Defaults to 1e-4.
+
+    Returns:
+        A tuple with solutions for where func(x) = 0 and the Jacobian matrix
+    """
+    test_Px = []
+    for i in range(len(NCx)):
+        test_Px.append(set_test_points_on_curve(NCx[i], sample_interval))
+
+    test_Py = []
+    for i in range(len(NCy)):
+        test_Py.append(set_test_points_on_curve(NCy[i], sample_interval))
+
+    int_P = []
+    for i in range(len(test_Px)):
+        for j in range(len(test_Py)):
+            p = find_intersection_2d(test_Px[i], test_Py[j], tol_redundant)
+            for k in range(len(p)):
+                int_P.append(p[k])
+    int_P = np.array(int_P)
+    P, J, _ = find_fixed_points(int_P, func, tol_redundant=tol_redundant)
+    return P, J
+
+
+def calc_fft(x):
+    out = np.fft.rfft(x)
+    n = len(x)
+    xFFT = abs(out) / n * 2
+    freq = np.arange(int(n / 2)) / n
+    return xFFT[: int(n / 2)], freq
+
+
+def dup_osc_idx(x: np.ndarray, n_dom: int = 3, tol: float = 0.05):
+    """
+    Find the index of the end of the first division in an array where the oscillatory patterns of two consecutive divisions are similar within a given tolerance.
+
+    Args:
+        x: An array-like object containing the data to be analyzed.
+        n_dom: An integer specifying the number of divisions to make in the array. Defaults to 3.
+        tol: A float specifying the tolerance for considering the oscillatory patterns of two divisions to be similar. Defaults to 0.05.
+
+    Returns:
+        A tuple containing the index of the end of the first division and the difference between the FFTs of the two divisions. If the oscillatory patterns of the two divisions are not similar within the given tolerance, returns (None, None).
+    """
+    l_int = int(np.floor(len(x) / n_dom))
+    ind_a, ind_b = np.arange((n_dom - 2) * l_int, (n_dom - 1) * l_int), np.arange((n_dom - 1) * l_int, n_dom * l_int)
+    y1 = x[ind_a]
+    y2 = x[ind_b]
+
+    def calc_fft_k(x):
+        ret = []
+        for k in range(x.shape[1]):
+            xFFT, _ = calc_fft(x[:, k])
+            ret.append(xFFT[1:])
+        return np.hstack(ret)
+
+    try:
+        xFFt1 = calc_fft_k(y1)
+        xFFt2 = calc_fft_k(y2)
+    except ValueError:
+        print("calc_fft_k run failed...")
+        return None, None
+
+    diff = np.linalg.norm(xFFt1 - xFFt2) / len(xFFt1)
+    if diff <= tol:
+        idx = (n_dom - 1) * l_int
+    else:
+        idx = None
+    return idx, diff
+
+
+def dup_osc_idx_iter(x: np.ndarray, max_iter: int = 5, **kwargs) -> Tuple[int, np.ndarray]:
+    """
+    Find the index of the end of the first division in an array where the oscillatory patterns of two consecutive divisions are similar within a given tolerance, using iterative search.
+
+    Args:
+        x: An array-like object containing the data to be analyzed.
+        max_iter: An integer specifying the maximum number of iterations to perform. Defaults to 5.
+
+    Returns:
+        A tuple containing the index of the end of the first division and an array of differences between the FFTs of consecutive divisions. If the oscillatory patterns of the two divisions are not similar within the given tolerance after the maximum number of iterations, returns the index and array from the final iteration.
+    """
+    stop = False
+    idx = len(x)
+    j = 0
+    D = []
+    while not stop:
+        i, d = dup_osc_idx(x[:idx], **kwargs)
+        D.append(d)
+        if i is None:
+            stop = True
+        else:
+            idx = i
+        j += 1
+        if j >= max_iter or idx == 0:
+            stop = True
+    D = np.array(D)
+    return idx, D

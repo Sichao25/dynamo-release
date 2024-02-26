@@ -61,486 +61,6 @@ from .utils import (
 )
 
 
-def norm(
-    X: np.ndarray, V: np.ndarray, T: Optional[np.ndarray] = None, fix_velocity: bool = True
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray, Dict[str, np.ndarray]]:
-    """Normalizes the X, Y (X + V) matrix to have zero means and unit covariance.
-    We use the mean of X, Y's center (mean) and scale parameters (standard deviation) to normalize T.
-
-    Args:
-        X: Current state. This corresponds to, for example, the spliced transcriptomic state.
-        V: Velocity estimates in delta t. This corresponds to, for example, the inferred spliced transcriptomic
-            velocity estimated calculated by dynamo or velocyto, scvelo.
-        T: Current state on a grid which is often used to visualize the vector field. This corresponds to, for example,
-            the spliced transcriptomic state.
-        fix_velocity: Whether to fix velocity and don't transform it. Default is True.
-
-    Returns:
-        A tuple of updated X, V, T and norm_dict which includes the mean and scale values for original X, V data used
-        in normalization.
-    """
-    Y = X + V
-
-    xm = np.mean(X, axis=0)
-    ym = np.mean(Y, axis=0)
-
-    x, y, t = (X - xm[None, :], Y - ym[None, :], T - (1 / 2 * (xm[None, :] + ym[None, :])) if T is not None else None)
-
-    xscale, yscale = (np.sqrt(np.mean(x**2, axis=0))[None, :], np.sqrt(np.mean(y**2, axis=0))[None, :])
-
-    X, Y, T = x / xscale, y / yscale, t / (1 / 2 * (xscale + yscale)) if T is not None else None
-
-    X, V, T = X, V if fix_velocity else Y - X, T
-    norm_dict = {"xm": xm, "ym": ym, "xscale": xscale, "yscale": yscale, "fix_velocity": fix_velocity}
-
-    return X, V, T, norm_dict
-
-
-def bandwidth_rule_of_thumb(X: np.ndarray, return_sigma: Optional[bool] = False) -> Union[Tuple[float, float], float]:
-    """
-    This function computes a rule-of-thumb bandwidth for a Gaussian kernel based on:
-    https://en.wikipedia.org/wiki/Kernel_density_estimation#A_rule-of-thumb_bandwidth_estimator
-
-    The bandwidth is a free parameter that controls the level of smoothing in the estimated distribution.
-
-    Args:
-        X: Current state. This corresponds to, for example, the spliced transcriptomic state.
-        return_sigma: Determines whether the standard deviation will be returned in addition to the bandwidth parameter
-
-    Returns:
-        Either a tuple with the bandwith and standard deviation or just the bandwidth
-    """
-    sig = np.sqrt(np.mean(np.diag(np.cov(X.T))))
-    h = 1.06 * sig / (len(X) ** (-1 / 5))
-    if return_sigma:
-        return h, sig
-    else:
-        return h
-
-
-def bandwidth_selector(X: np.ndarray) -> float:
-    """
-    This function computes an empirical bandwidth for a Gaussian kernel.
-    """
-    n, m = X.shape
-
-    _, distances = k_nearest_neighbors(
-        X,
-        k=max(2, int(0.2 * n)) - 1,
-        exclude_self=False,
-        pynn_rand_state=19491001,
-    )
-
-    d = np.mean(distances[:, 1:]) / 1.5
-    return np.sqrt(2) * d
-
-def denorm(
-    VecFld: Dict[str, Union[np.ndarray, None]],
-    X_old: np.ndarray,
-    V_old: np.ndarray,
-    norm_dict: Dict[str, Union[np.ndarray, bool]],
-) -> Dict[str, Union[np.ndarray, None]]:
-    """Denormalize data back to the original scale.
-
-    Args:
-        VecFld: The dictionary that stores the information for the reconstructed vector field function.
-        X_old: The original data for current state.
-        V_old: The original velocity data.
-        norm_dict: The norm_dict dictionary that includes the mean and scale values for X, Y used in normalizing the
-            data.
-
-    Returns:
-        An updated VecFld dictionary that includes denormalized X, Y, X_ctrl, grid, grid_V, V, and the norm_dict key.
-    """
-    Y_old = X_old + V_old
-    xm, ym = norm_dict["xm"], norm_dict["ym"]
-    x_scale, y_scale = norm_dict["xscale"], norm_dict["yscale"]
-    xy_m, xy_scale = (xm + ym) / 2, (x_scale + y_scale) / 2
-
-    X = VecFld["X"]
-    X_denorm = X_old
-    Y = VecFld["Y"]
-    Y_denorm = Y_old
-    V = VecFld["V"]
-    V_denorm = V_old if norm_dict["fix_velocity"] else (V + X) * y_scale + np.tile(ym, [V.shape[0], 1]) - X_denorm
-    grid = VecFld["grid"]
-    grid_denorm = grid * xy_scale + np.tile(xy_m, [grid.shape[0], 1]) if grid is not None else None
-    grid_V = VecFld["grid_V"]
-    grid_V_denorm = (
-        (grid + grid_V) * xy_scale + np.tile(xy_m, [grid_V.shape[0], 1]) - grid if grid_V is not None else None
-    )
-    VecFld_denorm = {
-        "X": X_denorm,
-        "Y": Y_denorm,
-        "V": V_denorm,
-        "grid": grid_denorm,
-        "grid_V": grid_V_denorm,
-        "norm_dict": norm_dict,
-    }
-
-    return VecFld_denorm
-
-
-@timeit
-def lstsq_solver(lhs, rhs, method="drouin"):
-    if method == "scipy":
-        C = lstsq(lhs, rhs)[0]
-    elif method == "drouin":
-        C = linear_least_squares(lhs, rhs)
-    else:
-        main_warning("Invalid linear least squares solver. Use Drouin's method instead.")
-        C = linear_least_squares(lhs, rhs)
-    return C
-
-
-def get_P(
-    Y: np.ndarray, V: np.ndarray, sigma2: float, gamma: float, a: float, div_cur_free_kernels: Optional[bool] = False
-) -> Tuple[np.ndarray, np.ndarray]:
-    """GET_P estimates the posterior probability and part of the energy.
-
-    Args:
-        Y: Velocities from the data.
-        V: The estimated velocity: V=f(X), f being the vector field function.
-        sigma2: sigma2 is defined as sum(sum((Y - V)**2)) / (N * D)
-        gamma: Percentage of inliers in the samples. This is an inital value for EM iteration, and it is not important.
-        a: Parameter of the model of outliers. We assume the outliers obey uniform distribution, and the volume of
-            outlier's variation space is a.
-        div_cur_free_kernels: A logic flag to determine whether the divergence-free or curl-free kernels will be used for learning the vector field.
-
-    Returns:
-        Tuple of (posterior probability, energy) related to equations 27 and 26 in the SparseVFC paper.
-
-    """
-
-    if div_cur_free_kernels:
-        Y = Y.reshape((2, int(Y.shape[0] / 2)), order="F").T
-        V = V.reshape((2, int(V.shape[0] / 2)), order="F").T
-
-    D = Y.shape[1]
-    temp1 = np.exp(-np.sum((Y - V) ** 2, 1) / (2 * sigma2))
-    temp2 = (2 * np.pi * sigma2) ** (D / 2) * (1 - gamma) / (gamma * a)
-    temp1[temp1 == 0] = np.min(temp1[temp1 != 0])
-    P = temp1 / (temp1 + temp2)
-    E = P.T.dot(np.sum((Y - V) ** 2, 1)) / (2 * sigma2) + np.sum(P) * np.log(sigma2) * D / 2
-
-    return (P[:, None], E) if P.ndim == 1 else (P, E)
-
-
-@timeit
-def graphize_vecfld(
-    func: Callable,
-    X: np.ndarray,
-    nbrs_idx=None,
-    dist=None,
-    k: int = 30,
-    distance_free: bool = True,
-    n_int_steps: int = 20,
-    cores: int = 1,
-) -> Tuple[np.ndarray, Union[NNDescent, NearestNeighbors]]:
-    n, d = X.shape
-
-    nbrs = None
-    if nbrs_idx is None:
-        nbrs_idx, dist, nbrs, _ = k_nearest_neighbors(
-            X,
-            k=k,
-            exclude_self=False,
-            pynn_rand_state=19491001,
-            return_nbrs=True,
-        )
-
-    if dist is None and not distance_free:
-        D = pdist(X)
-    else:
-        D = None
-
-    V = sp.csr_matrix((n, n))
-    if cores == 1:
-        for i, idx in enumerate(LoggerManager.progress_logger(nbrs_idx, progress_name="graphize_vecfld")):
-            V += construct_v(X, i, idx, n_int_steps, func, distance_free, dist, D, n)
-
-    else:
-        pool = ThreadPool(cores)
-        res = pool.starmap(
-            construct_v,
-            zip(
-                itertools.repeat(X),
-                np.arange(len(nbrs_idx)),
-                nbrs_idx,
-                itertools.repeat(n_int_steps),
-                itertools.repeat(func),
-                itertools.repeat(distance_free),
-                itertools.repeat(dist),
-                itertools.repeat(D),
-                itertools.repeat(n),
-            ),
-        )
-        pool.close()
-        pool.join()
-        V = functools.reduce((lambda a, b: a + b), res)
-    return V, nbrs
-
-
-def construct_v(X, i, idx, n_int_steps, func, distance_free, dist, D, n):
-    """helper function for parallism"""
-
-    V = sp.csr_matrix((n, n))
-    x = X[i].A if sp.issparse(X) else X[i]
-    Y = X[idx[1:]].A if sp.issparse(X) else X[idx[1:]]
-    for j, y in enumerate(Y):
-        pts = np.linspace(x, y, n_int_steps)
-        v = func(pts)
-
-        lxy = np.linalg.norm(y - x)
-        if lxy > 0:
-            u = (y - x) / np.linalg.norm(y - x)
-        else:
-            u = y - x
-        v = np.mean(v.dot(u))
-        if not distance_free:
-            if dist is None:
-                d = D[index_condensed_matrix(n, i, idx[j + 1])]
-            else:
-                d = dist[i][j + 1]
-            v *= d
-        V[i, idx[j + 1]] = v
-        V[idx[j + 1], i] = -v
-
-    return V
-
-
-def SparseVFC(
-    X: np.ndarray,
-    Y: np.ndarray,
-    Grid: np.ndarray,
-    M: int = 100,
-    a: float = 5,
-    beta: float = None,
-    ecr: float = 1e-5,
-    gamma: float = 0.9,
-    lambda_: float = 3,
-    minP: float = 1e-5,
-    MaxIter: int = 500,
-    theta: float = 0.75,
-    div_cur_free_kernels: bool = False,
-    velocity_based_sampling: bool = True,
-    sigma: float = 0.8,
-    eta: float = 0.5,
-    seed: Union[int, np.ndarray] = 0,
-    lstsq_method: str = "drouin",
-    verbose: int = 1,
-) -> VecFldDict:
-    """Apply sparseVFC (vector field consensus) algorithm to learn a functional form of the vector field from random
-    samples with outlier on the entire space robustly and efficiently. (Ma, Jiayi, etc. al, Pattern Recognition, 2013)
-
-    Args:
-        X: Current state. This corresponds to, for example, the spliced transcriptomic state.
-        Y: Velocity estimates in delta t. This corresponds to, for example, the inferred spliced transcriptomic
-            velocity or total RNA velocity based on metabolic labeling data estimated calculated by dynamo.
-        Grid: Current state on a grid which is often used to visualize the vector field. This corresponds to, for example,
-            the spliced transcriptomic state or total RNA state.
-        M: The number of basis functions to approximate the vector field.
-        a: Parameter of the model of outliers. We assume the outliers obey uniform distribution, and the volume of
-            outlier's variation space is `a`.
-        beta: Parameter of Gaussian Kernel, k(x, y) = exp(-beta*||x-y||^2).
-            If None, a rule-of-thumb bandwidth will be computed automatically.
-        ecr: The minimum limitation of energy change rate in the iteration process.
-        gamma: Percentage of inliers in the samples. This is an initial value for EM iteration, and it is not important.
-        lambda_: Represents the trade-off between the goodness of data fit and regularization. Larger Lambda_ put more
-            weights on regularization.
-        minP: The posterior probability Matrix P may be singular for matrix inversion. We set the minimum value of P as
-            minP.
-        MaxIter: Maximum iteration times.
-        theta: Define how could be an inlier. If the posterior probability of a sample is an inlier is larger than theta,
-            then it is regarded as an inlier.
-        div_cur_free_kernels: A logic flag to determine whether the divergence-free or curl-free kernels will be used for learning the
-            vector field.
-        sigma: Bandwidth parameter.
-        eta: Combination coefficient for the divergence-free or the curl-free kernels.
-        seed: int or 1-d array_like, optional (default: `0`)
-            Seed for RandomState. Must be convertible to 32 bit unsigned integers. Used in sampling control points.
-            Default is to be 0 for ensure consistency between different runs.
-        lstsq_method: The name of the linear least square solver, can be either 'scipy` or `douin`.
-        verbose: The level of printing running information.
-
-    Returns:
-        A dictionary which contains:
-            X: Current state.
-            valid_ind: The indices of cells that have finite velocity values.
-            X_ctrl: Sample control points of current state.
-            ctrl_idx: Indices for the sampled control points.
-            Y: Velocity estimates in delta t.
-            beta: Parameter of the Gaussian Kernel for the kernel matrix (Gram matrix).
-            V: Prediction of velocity of X.
-            C: Finite set of the coefficients for the
-            P: Posterior probability Matrix of inliers.
-            VFCIndex: Indexes of inliers found by sparseVFC.
-            sigma2: Energy change rate.
-            grid: Grid of current state.
-            grid_V: Prediction of velocity of the grid.
-            iteration: Number of the last iteration.
-            tecr_traj: Vector of relative energy changes rate comparing to previous step.
-            E_traj: Vector of energy at each iteration,
-        where V = f(X), P is the posterior probability and VFCIndex is the indexes of inliers found by sparseVFC.
-        Note that V = `con_K(Grid, X_ctrl, beta).dot(C)` gives the prediction of velocity on Grid (but can also be any
-        point in the gene expression state space).
-
-    """
-    logger = LoggerManager.gen_logger("SparseVFC")
-    temp_logger = LoggerManager.get_temp_timer_logger()
-    logger.info("[SparseVFC] begins...")
-    logger.log_time()
-
-    need_utility_time_measure = verbose > 1
-    X_ori, Y_ori = X.copy(), Y.copy()
-    valid_ind = np.where(np.isfinite(Y.sum(1)))[0]
-    X, Y = X[valid_ind], Y[valid_ind]
-    N, D = Y.shape
-    grid_U = None
-
-    # Construct kernel matrix K
-    tmp_X, uid = np.unique(X, axis=0, return_index=True)  # return unique rows
-    M = min(M, tmp_X.shape[0])
-    if velocity_based_sampling:
-        logger.info("Sampling control points based on data velocity magnitude...")
-        idx = sample_by_velocity(Y[uid], M, seed=seed)
-    else:
-        idx = np.random.RandomState(seed=seed).permutation(tmp_X.shape[0])  # rand select some initial points
-        idx = idx[range(M)]
-    ctrl_pts = tmp_X[idx, :]
-
-    if beta is None:
-        h = bandwidth_selector(ctrl_pts)
-        beta = 1 / h**2
-
-    K = (
-        con_K(ctrl_pts, ctrl_pts, beta, timeit=need_utility_time_measure)
-        if div_cur_free_kernels is False
-        else con_K_div_cur_free(ctrl_pts, ctrl_pts, sigma, eta, timeit=need_utility_time_measure)[0]
-    )
-    U = (
-        con_K(X, ctrl_pts, beta, timeit=need_utility_time_measure)
-        if div_cur_free_kernels is False
-        else con_K_div_cur_free(X, ctrl_pts, sigma, eta, timeit=need_utility_time_measure)[0]
-    )
-    if Grid is not None:
-        grid_U = (
-            con_K(Grid, ctrl_pts, beta, timeit=need_utility_time_measure)
-            if div_cur_free_kernels is False
-            else con_K_div_cur_free(Grid, ctrl_pts, sigma, eta, timeit=need_utility_time_measure)[0]
-        )
-    M = ctrl_pts.shape[0] * D if div_cur_free_kernels else ctrl_pts.shape[0]
-
-    if div_cur_free_kernels:
-        X = X.flatten()[:, None]
-        Y = Y.flatten()[:, None]
-
-    # Initialization
-    V = X.copy() if div_cur_free_kernels else np.zeros((N, D))
-    C = np.zeros((M, 1)) if div_cur_free_kernels else np.zeros((M, D))
-    i, tecr, E = 0, 1, 1
-    # test this
-    sigma2 = sum(sum((Y - X) ** 2)) / (N * D) if div_cur_free_kernels else sum(sum((Y - V) ** 2)) / (N * D)
-    sigma2 = 1e-7 if sigma2 < 1e-8 else sigma2
-    tecr_vec = np.ones(MaxIter) * np.nan
-    E_vec = np.ones(MaxIter) * np.nan
-    P = None
-    while i < MaxIter and tecr > ecr and sigma2 > 1e-8:
-        # E_step
-        E_old = E
-        P, E = get_P(Y, V, sigma2, gamma, a, div_cur_free_kernels)
-
-        E = E + lambda_ / 2 * np.trace(C.T.dot(K).dot(C))
-        E_vec[i] = E
-        tecr = abs((E - E_old) / E)
-        tecr_vec[i] = tecr
-
-        # logger.report_progress(count=i, total=MaxIter, progress_name="E-step iteration")
-        if need_utility_time_measure:
-            logger.info(
-                "iterate: %d, gamma: %.3f, energy change rate: %s, sigma2=%s"
-                % (i, gamma, scinot(tecr, 3), scinot(sigma2, 3))
-            )
-
-        # M-step. Solve linear system for C.
-        temp_logger.log_time()
-        P = np.maximum(P, minP)
-        if div_cur_free_kernels:
-            P = np.kron(P, np.ones((int(U.shape[0] / P.shape[0]), 1)))  # np.kron(P, np.ones((D, 1)))
-            lhs = (U.T * np.matlib.tile(P.T, [M, 1])).dot(U) + lambda_ * sigma2 * K
-            rhs = (U.T * np.matlib.tile(P.T, [M, 1])).dot(Y)
-        else:
-            UP = U.T * numpy.matlib.repmat(P.T, M, 1)
-            lhs = UP.dot(U) + lambda_ * sigma2 * K
-            rhs = UP.dot(Y)
-        if need_utility_time_measure:
-            temp_logger.finish_progress(progress_name="computing lhs and rhs")
-        temp_logger.log_time()
-
-        C = lstsq_solver(lhs, rhs, method=lstsq_method, timeit=need_utility_time_measure)
-
-        # Update V and sigma**2
-        V = U.dot(C)
-        Sp = sum(P) / 2 if div_cur_free_kernels else sum(P)
-        sigma2 = (sum(P.T.dot(np.sum((Y - V) ** 2, 1))) / np.dot(Sp, D))[0]
-
-        # Update gamma
-        numcorr = len(np.where(P > theta)[0])
-        gamma = numcorr / X.shape[0]
-
-        if gamma > 0.95:
-            gamma = 0.95
-        elif gamma < 0.05:
-            gamma = 0.05
-
-        i += 1
-    if i == 0 and not (tecr > ecr and sigma2 > 1e-8):
-        raise Exception(
-            "please check your input parameters, "
-            f"tecr: {tecr}, ecr {ecr} and sigma2 {sigma2},"
-            f"tecr must larger than ecr and sigma2 must larger than 1e-8"
-        )
-
-    grid_V = None
-    if Grid is not None:
-        grid_V = np.dot(grid_U, C)
-
-    VecFld = {
-        "X": X_ori,
-        "valid_ind": valid_ind,
-        "X_ctrl": ctrl_pts,
-        "ctrl_idx": idx,
-        "Y": Y_ori,
-        "beta": beta,
-        "V": V.reshape((N, D)) if div_cur_free_kernels else V,
-        "C": C,
-        "P": P,
-        "VFCIndex": np.where(P > theta)[0],
-        "sigma2": sigma2,
-        "grid": Grid,
-        "grid_V": grid_V,
-        "iteration": i - 1,
-        "tecr_traj": tecr_vec[:i],
-        "E_traj": E_vec[:i],
-    }
-    if div_cur_free_kernels:
-        VecFld["div_cur_free_kernels"], VecFld["sigma"], VecFld["eta"] = (
-            True,
-            sigma,
-            eta,
-        )
-        temp_logger.log_time()
-        (
-            _,
-            VecFld["df_kernel"],
-            VecFld["cf_kernel"],
-        ) = con_K_div_cur_free(X, ctrl_pts, sigma, eta, timeit=need_utility_time_measure)
-        temp_logger.finish_progress(progress_name="con_K_div_cur_free")
-
-    logger.finish_progress(progress_name="SparseVFC")
-    return VecFld
-
-
 class BaseVectorField:
     """The BaseVectorField class is a base class for storing and manipulating vector fields. A vector field is a function that associates a vector to each point in a certain space.
 
@@ -1415,3 +935,483 @@ class BifurcationTwoGenesVectorField(DifferentiableVectorField):
         return super().find_fixed_points(n_x0, X0=None, domain=domain, **kwargs)
 
     # TODO: nullcline calculation
+
+
+def SparseVFC(
+    X: np.ndarray,
+    Y: np.ndarray,
+    Grid: np.ndarray,
+    M: int = 100,
+    a: float = 5,
+    beta: float = None,
+    ecr: float = 1e-5,
+    gamma: float = 0.9,
+    lambda_: float = 3,
+    minP: float = 1e-5,
+    MaxIter: int = 500,
+    theta: float = 0.75,
+    div_cur_free_kernels: bool = False,
+    velocity_based_sampling: bool = True,
+    sigma: float = 0.8,
+    eta: float = 0.5,
+    seed: Union[int, np.ndarray] = 0,
+    lstsq_method: str = "drouin",
+    verbose: int = 1,
+) -> VecFldDict:
+    """Apply sparseVFC (vector field consensus) algorithm to learn a functional form of the vector field from random
+    samples with outlier on the entire space robustly and efficiently. (Ma, Jiayi, etc. al, Pattern Recognition, 2013)
+
+    Args:
+        X: Current state. This corresponds to, for example, the spliced transcriptomic state.
+        Y: Velocity estimates in delta t. This corresponds to, for example, the inferred spliced transcriptomic
+            velocity or total RNA velocity based on metabolic labeling data estimated calculated by dynamo.
+        Grid: Current state on a grid which is often used to visualize the vector field. This corresponds to, for example,
+            the spliced transcriptomic state or total RNA state.
+        M: The number of basis functions to approximate the vector field.
+        a: Parameter of the model of outliers. We assume the outliers obey uniform distribution, and the volume of
+            outlier's variation space is `a`.
+        beta: Parameter of Gaussian Kernel, k(x, y) = exp(-beta*||x-y||^2).
+            If None, a rule-of-thumb bandwidth will be computed automatically.
+        ecr: The minimum limitation of energy change rate in the iteration process.
+        gamma: Percentage of inliers in the samples. This is an initial value for EM iteration, and it is not important.
+        lambda_: Represents the trade-off between the goodness of data fit and regularization. Larger Lambda_ put more
+            weights on regularization.
+        minP: The posterior probability Matrix P may be singular for matrix inversion. We set the minimum value of P as
+            minP.
+        MaxIter: Maximum iteration times.
+        theta: Define how could be an inlier. If the posterior probability of a sample is an inlier is larger than theta,
+            then it is regarded as an inlier.
+        div_cur_free_kernels: A logic flag to determine whether the divergence-free or curl-free kernels will be used for learning the
+            vector field.
+        sigma: Bandwidth parameter.
+        eta: Combination coefficient for the divergence-free or the curl-free kernels.
+        seed: int or 1-d array_like, optional (default: `0`)
+            Seed for RandomState. Must be convertible to 32 bit unsigned integers. Used in sampling control points.
+            Default is to be 0 for ensure consistency between different runs.
+        lstsq_method: The name of the linear least square solver, can be either 'scipy` or `douin`.
+        verbose: The level of printing running information.
+
+    Returns:
+        A dictionary which contains:
+            X: Current state.
+            valid_ind: The indices of cells that have finite velocity values.
+            X_ctrl: Sample control points of current state.
+            ctrl_idx: Indices for the sampled control points.
+            Y: Velocity estimates in delta t.
+            beta: Parameter of the Gaussian Kernel for the kernel matrix (Gram matrix).
+            V: Prediction of velocity of X.
+            C: Finite set of the coefficients for the
+            P: Posterior probability Matrix of inliers.
+            VFCIndex: Indexes of inliers found by sparseVFC.
+            sigma2: Energy change rate.
+            grid: Grid of current state.
+            grid_V: Prediction of velocity of the grid.
+            iteration: Number of the last iteration.
+            tecr_traj: Vector of relative energy changes rate comparing to previous step.
+            E_traj: Vector of energy at each iteration,
+        where V = f(X), P is the posterior probability and VFCIndex is the indexes of inliers found by sparseVFC.
+        Note that V = `con_K(Grid, X_ctrl, beta).dot(C)` gives the prediction of velocity on Grid (but can also be any
+        point in the gene expression state space).
+
+    """
+    logger = LoggerManager.gen_logger("SparseVFC")
+    temp_logger = LoggerManager.get_temp_timer_logger()
+    logger.info("[SparseVFC] begins...")
+    logger.log_time()
+
+    need_utility_time_measure = verbose > 1
+    X_ori, Y_ori = X.copy(), Y.copy()
+    valid_ind = np.where(np.isfinite(Y.sum(1)))[0]
+    X, Y = X[valid_ind], Y[valid_ind]
+    N, D = Y.shape
+    grid_U = None
+
+    # Construct kernel matrix K
+    tmp_X, uid = np.unique(X, axis=0, return_index=True)  # return unique rows
+    M = min(M, tmp_X.shape[0])
+    if velocity_based_sampling:
+        logger.info("Sampling control points based on data velocity magnitude...")
+        idx = sample_by_velocity(Y[uid], M, seed=seed)
+    else:
+        idx = np.random.RandomState(seed=seed).permutation(tmp_X.shape[0])  # rand select some initial points
+        idx = idx[range(M)]
+    ctrl_pts = tmp_X[idx, :]
+
+    if beta is None:
+        h = bandwidth_selector(ctrl_pts)
+        beta = 1 / h**2
+
+    K = (
+        con_K(ctrl_pts, ctrl_pts, beta, timeit=need_utility_time_measure)
+        if div_cur_free_kernels is False
+        else con_K_div_cur_free(ctrl_pts, ctrl_pts, sigma, eta, timeit=need_utility_time_measure)[0]
+    )
+    U = (
+        con_K(X, ctrl_pts, beta, timeit=need_utility_time_measure)
+        if div_cur_free_kernels is False
+        else con_K_div_cur_free(X, ctrl_pts, sigma, eta, timeit=need_utility_time_measure)[0]
+    )
+    if Grid is not None:
+        grid_U = (
+            con_K(Grid, ctrl_pts, beta, timeit=need_utility_time_measure)
+            if div_cur_free_kernels is False
+            else con_K_div_cur_free(Grid, ctrl_pts, sigma, eta, timeit=need_utility_time_measure)[0]
+        )
+    M = ctrl_pts.shape[0] * D if div_cur_free_kernels else ctrl_pts.shape[0]
+
+    if div_cur_free_kernels:
+        X = X.flatten()[:, None]
+        Y = Y.flatten()[:, None]
+
+    # Initialization
+    V = X.copy() if div_cur_free_kernels else np.zeros((N, D))
+    C = np.zeros((M, 1)) if div_cur_free_kernels else np.zeros((M, D))
+    i, tecr, E = 0, 1, 1
+    # test this
+    sigma2 = sum(sum((Y - X) ** 2)) / (N * D) if div_cur_free_kernels else sum(sum((Y - V) ** 2)) / (N * D)
+    sigma2 = 1e-7 if sigma2 < 1e-8 else sigma2
+    tecr_vec = np.ones(MaxIter) * np.nan
+    E_vec = np.ones(MaxIter) * np.nan
+    P = None
+    while i < MaxIter and tecr > ecr and sigma2 > 1e-8:
+        # E_step
+        E_old = E
+        P, E = get_P(Y, V, sigma2, gamma, a, div_cur_free_kernels)
+
+        E = E + lambda_ / 2 * np.trace(C.T.dot(K).dot(C))
+        E_vec[i] = E
+        tecr = abs((E - E_old) / E)
+        tecr_vec[i] = tecr
+
+        # logger.report_progress(count=i, total=MaxIter, progress_name="E-step iteration")
+        if need_utility_time_measure:
+            logger.info(
+                "iterate: %d, gamma: %.3f, energy change rate: %s, sigma2=%s"
+                % (i, gamma, scinot(tecr, 3), scinot(sigma2, 3))
+            )
+
+        # M-step. Solve linear system for C.
+        temp_logger.log_time()
+        P = np.maximum(P, minP)
+        if div_cur_free_kernels:
+            P = np.kron(P, np.ones((int(U.shape[0] / P.shape[0]), 1)))  # np.kron(P, np.ones((D, 1)))
+            lhs = (U.T * np.matlib.tile(P.T, [M, 1])).dot(U) + lambda_ * sigma2 * K
+            rhs = (U.T * np.matlib.tile(P.T, [M, 1])).dot(Y)
+        else:
+            UP = U.T * numpy.matlib.repmat(P.T, M, 1)
+            lhs = UP.dot(U) + lambda_ * sigma2 * K
+            rhs = UP.dot(Y)
+        if need_utility_time_measure:
+            temp_logger.finish_progress(progress_name="computing lhs and rhs")
+        temp_logger.log_time()
+
+        C = lstsq_solver(lhs, rhs, method=lstsq_method, timeit=need_utility_time_measure)
+
+        # Update V and sigma**2
+        V = U.dot(C)
+        Sp = sum(P) / 2 if div_cur_free_kernels else sum(P)
+        sigma2 = (sum(P.T.dot(np.sum((Y - V) ** 2, 1))) / np.dot(Sp, D))[0]
+
+        # Update gamma
+        numcorr = len(np.where(P > theta)[0])
+        gamma = numcorr / X.shape[0]
+
+        if gamma > 0.95:
+            gamma = 0.95
+        elif gamma < 0.05:
+            gamma = 0.05
+
+        i += 1
+    if i == 0 and not (tecr > ecr and sigma2 > 1e-8):
+        raise Exception(
+            "please check your input parameters, "
+            f"tecr: {tecr}, ecr {ecr} and sigma2 {sigma2},"
+            f"tecr must larger than ecr and sigma2 must larger than 1e-8"
+        )
+
+    grid_V = None
+    if Grid is not None:
+        grid_V = np.dot(grid_U, C)
+
+    VecFld = {
+        "X": X_ori,
+        "valid_ind": valid_ind,
+        "X_ctrl": ctrl_pts,
+        "ctrl_idx": idx,
+        "Y": Y_ori,
+        "beta": beta,
+        "V": V.reshape((N, D)) if div_cur_free_kernels else V,
+        "C": C,
+        "P": P,
+        "VFCIndex": np.where(P > theta)[0],
+        "sigma2": sigma2,
+        "grid": Grid,
+        "grid_V": grid_V,
+        "iteration": i - 1,
+        "tecr_traj": tecr_vec[:i],
+        "E_traj": E_vec[:i],
+    }
+    if div_cur_free_kernels:
+        VecFld["div_cur_free_kernels"], VecFld["sigma"], VecFld["eta"] = (
+            True,
+            sigma,
+            eta,
+        )
+        temp_logger.log_time()
+        (
+            _,
+            VecFld["df_kernel"],
+            VecFld["cf_kernel"],
+        ) = con_K_div_cur_free(X, ctrl_pts, sigma, eta, timeit=need_utility_time_measure)
+        temp_logger.finish_progress(progress_name="con_K_div_cur_free")
+
+    logger.finish_progress(progress_name="SparseVFC")
+    return VecFld
+
+
+def norm(
+    X: np.ndarray, V: np.ndarray, T: Optional[np.ndarray] = None, fix_velocity: bool = True
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, Dict[str, np.ndarray]]:
+    """Normalizes the X, Y (X + V) matrix to have zero means and unit covariance.
+    We use the mean of X, Y's center (mean) and scale parameters (standard deviation) to normalize T.
+
+    Args:
+        X: Current state. This corresponds to, for example, the spliced transcriptomic state.
+        V: Velocity estimates in delta t. This corresponds to, for example, the inferred spliced transcriptomic
+            velocity estimated calculated by dynamo or velocyto, scvelo.
+        T: Current state on a grid which is often used to visualize the vector field. This corresponds to, for example,
+            the spliced transcriptomic state.
+        fix_velocity: Whether to fix velocity and don't transform it. Default is True.
+
+    Returns:
+        A tuple of updated X, V, T and norm_dict which includes the mean and scale values for original X, V data used
+        in normalization.
+    """
+    Y = X + V
+
+    xm = np.mean(X, axis=0)
+    ym = np.mean(Y, axis=0)
+
+    x, y, t = (X - xm[None, :], Y - ym[None, :], T - (1 / 2 * (xm[None, :] + ym[None, :])) if T is not None else None)
+
+    xscale, yscale = (np.sqrt(np.mean(x**2, axis=0))[None, :], np.sqrt(np.mean(y**2, axis=0))[None, :])
+
+    X, Y, T = x / xscale, y / yscale, t / (1 / 2 * (xscale + yscale)) if T is not None else None
+
+    X, V, T = X, V if fix_velocity else Y - X, T
+    norm_dict = {"xm": xm, "ym": ym, "xscale": xscale, "yscale": yscale, "fix_velocity": fix_velocity}
+
+    return X, V, T, norm_dict
+
+
+def bandwidth_rule_of_thumb(X: np.ndarray, return_sigma: Optional[bool] = False) -> Union[Tuple[float, float], float]:
+    """
+    This function computes a rule-of-thumb bandwidth for a Gaussian kernel based on:
+    https://en.wikipedia.org/wiki/Kernel_density_estimation#A_rule-of-thumb_bandwidth_estimator
+
+    The bandwidth is a free parameter that controls the level of smoothing in the estimated distribution.
+
+    Args:
+        X: Current state. This corresponds to, for example, the spliced transcriptomic state.
+        return_sigma: Determines whether the standard deviation will be returned in addition to the bandwidth parameter
+
+    Returns:
+        Either a tuple with the bandwith and standard deviation or just the bandwidth
+    """
+    sig = np.sqrt(np.mean(np.diag(np.cov(X.T))))
+    h = 1.06 * sig / (len(X) ** (-1 / 5))
+    if return_sigma:
+        return h, sig
+    else:
+        return h
+
+
+def bandwidth_selector(X: np.ndarray) -> float:
+    """
+    This function computes an empirical bandwidth for a Gaussian kernel.
+    """
+    n, m = X.shape
+
+    _, distances = k_nearest_neighbors(
+        X,
+        k=max(2, int(0.2 * n)) - 1,
+        exclude_self=False,
+        pynn_rand_state=19491001,
+    )
+
+    d = np.mean(distances[:, 1:]) / 1.5
+    return np.sqrt(2) * d
+
+def denorm(
+    VecFld: Dict[str, Union[np.ndarray, None]],
+    X_old: np.ndarray,
+    V_old: np.ndarray,
+    norm_dict: Dict[str, Union[np.ndarray, bool]],
+) -> Dict[str, Union[np.ndarray, None]]:
+    """Denormalize data back to the original scale.
+
+    Args:
+        VecFld: The dictionary that stores the information for the reconstructed vector field function.
+        X_old: The original data for current state.
+        V_old: The original velocity data.
+        norm_dict: The norm_dict dictionary that includes the mean and scale values for X, Y used in normalizing the
+            data.
+
+    Returns:
+        An updated VecFld dictionary that includes denormalized X, Y, X_ctrl, grid, grid_V, V, and the norm_dict key.
+    """
+    Y_old = X_old + V_old
+    xm, ym = norm_dict["xm"], norm_dict["ym"]
+    x_scale, y_scale = norm_dict["xscale"], norm_dict["yscale"]
+    xy_m, xy_scale = (xm + ym) / 2, (x_scale + y_scale) / 2
+
+    X = VecFld["X"]
+    X_denorm = X_old
+    Y = VecFld["Y"]
+    Y_denorm = Y_old
+    V = VecFld["V"]
+    V_denorm = V_old if norm_dict["fix_velocity"] else (V + X) * y_scale + np.tile(ym, [V.shape[0], 1]) - X_denorm
+    grid = VecFld["grid"]
+    grid_denorm = grid * xy_scale + np.tile(xy_m, [grid.shape[0], 1]) if grid is not None else None
+    grid_V = VecFld["grid_V"]
+    grid_V_denorm = (
+        (grid + grid_V) * xy_scale + np.tile(xy_m, [grid_V.shape[0], 1]) - grid if grid_V is not None else None
+    )
+    VecFld_denorm = {
+        "X": X_denorm,
+        "Y": Y_denorm,
+        "V": V_denorm,
+        "grid": grid_denorm,
+        "grid_V": grid_V_denorm,
+        "norm_dict": norm_dict,
+    }
+
+    return VecFld_denorm
+
+
+@timeit
+def lstsq_solver(lhs, rhs, method="drouin"):
+    if method == "scipy":
+        C = lstsq(lhs, rhs)[0]
+    elif method == "drouin":
+        C = linear_least_squares(lhs, rhs)
+    else:
+        main_warning("Invalid linear least squares solver. Use Drouin's method instead.")
+        C = linear_least_squares(lhs, rhs)
+    return C
+
+
+def get_P(
+    Y: np.ndarray, V: np.ndarray, sigma2: float, gamma: float, a: float, div_cur_free_kernels: Optional[bool] = False
+) -> Tuple[np.ndarray, np.ndarray]:
+    """GET_P estimates the posterior probability and part of the energy.
+
+    Args:
+        Y: Velocities from the data.
+        V: The estimated velocity: V=f(X), f being the vector field function.
+        sigma2: sigma2 is defined as sum(sum((Y - V)**2)) / (N * D)
+        gamma: Percentage of inliers in the samples. This is an inital value for EM iteration, and it is not important.
+        a: Parameter of the model of outliers. We assume the outliers obey uniform distribution, and the volume of
+            outlier's variation space is a.
+        div_cur_free_kernels: A logic flag to determine whether the divergence-free or curl-free kernels will be used for learning the vector field.
+
+    Returns:
+        Tuple of (posterior probability, energy) related to equations 27 and 26 in the SparseVFC paper.
+
+    """
+
+    if div_cur_free_kernels:
+        Y = Y.reshape((2, int(Y.shape[0] / 2)), order="F").T
+        V = V.reshape((2, int(V.shape[0] / 2)), order="F").T
+
+    D = Y.shape[1]
+    temp1 = np.exp(-np.sum((Y - V) ** 2, 1) / (2 * sigma2))
+    temp2 = (2 * np.pi * sigma2) ** (D / 2) * (1 - gamma) / (gamma * a)
+    temp1[temp1 == 0] = np.min(temp1[temp1 != 0])
+    P = temp1 / (temp1 + temp2)
+    E = P.T.dot(np.sum((Y - V) ** 2, 1)) / (2 * sigma2) + np.sum(P) * np.log(sigma2) * D / 2
+
+    return (P[:, None], E) if P.ndim == 1 else (P, E)
+
+
+@timeit
+def graphize_vecfld(
+    func: Callable,
+    X: np.ndarray,
+    nbrs_idx=None,
+    dist=None,
+    k: int = 30,
+    distance_free: bool = True,
+    n_int_steps: int = 20,
+    cores: int = 1,
+) -> Tuple[np.ndarray, Union[NNDescent, NearestNeighbors]]:
+    n, d = X.shape
+
+    nbrs = None
+    if nbrs_idx is None:
+        nbrs_idx, dist, nbrs, _ = k_nearest_neighbors(
+            X,
+            k=k,
+            exclude_self=False,
+            pynn_rand_state=19491001,
+            return_nbrs=True,
+        )
+
+    if dist is None and not distance_free:
+        D = pdist(X)
+    else:
+        D = None
+
+    V = sp.csr_matrix((n, n))
+    if cores == 1:
+        for i, idx in enumerate(LoggerManager.progress_logger(nbrs_idx, progress_name="graphize_vecfld")):
+            V += construct_v(X, i, idx, n_int_steps, func, distance_free, dist, D, n)
+
+    else:
+        pool = ThreadPool(cores)
+        res = pool.starmap(
+            construct_v,
+            zip(
+                itertools.repeat(X),
+                np.arange(len(nbrs_idx)),
+                nbrs_idx,
+                itertools.repeat(n_int_steps),
+                itertools.repeat(func),
+                itertools.repeat(distance_free),
+                itertools.repeat(dist),
+                itertools.repeat(D),
+                itertools.repeat(n),
+            ),
+        )
+        pool.close()
+        pool.join()
+        V = functools.reduce((lambda a, b: a + b), res)
+    return V, nbrs
+
+
+def construct_v(X, i, idx, n_int_steps, func, distance_free, dist, D, n):
+    """helper function for parallism"""
+
+    V = sp.csr_matrix((n, n))
+    x = X[i].A if sp.issparse(X) else X[i]
+    Y = X[idx[1:]].A if sp.issparse(X) else X[idx[1:]]
+    for j, y in enumerate(Y):
+        pts = np.linspace(x, y, n_int_steps)
+        v = func(pts)
+
+        lxy = np.linalg.norm(y - x)
+        if lxy > 0:
+            u = (y - x) / np.linalg.norm(y - x)
+        else:
+            u = y - x
+        v = np.mean(v.dot(u))
+        if not distance_free:
+            if dist is None:
+                d = D[index_condensed_matrix(n, i, idx[j + 1])]
+            else:
+                d = dist[i][j + 1]
+            v *= d
+        V[i, idx[j + 1]] = v
+        V[idx[j + 1], i] = -v
+
+    return V

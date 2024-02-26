@@ -9,71 +9,6 @@ from ..dynamo_logger import main_debug, main_info, main_tqdm
 from .rank_vf import rank_jacobian_genes
 
 
-def get_interaction_in_cluster(
-    rank_df_dict: Dict[str, pd.DataFrame],
-    group: str,
-    genes: List,
-    n_top_genes: int = 100,
-    rank_regulators: bool = False,
-    negative_values: bool = False,
-) -> pd.DataFrame:
-    """Retrieve interactions among input genes given the ranking dataframe.
-
-    Args:
-        rank_df_dict: The dictionary of pandas data frame storing the gene ranking information for each cluster.
-        group: The group name that points to the key for the rank_df.
-        genes: The list of input genes, from which the network will be constructed.
-        n_top_genes: Number of top genes that will be selected from to build the network.
-        rank_regulators: Whether the input dictionary is about ranking top regulators of each gene per cluster.
-
-    Returns:
-        A dataframe of interactions between input genes for the specified group of cells based on ranking information
-        of Jacobian analysis. It has `regulator`, `target` and `weight` three columns.
-
-    """
-
-    subset_rank_df = rank_df_dict[group].head(n_top_genes)
-    if negative_values:
-        subset_rank_df = pd.concat([subset_rank_df, rank_df_dict[group].tail(n_top_genes)])
-    valid_genes = subset_rank_df.columns.intersection(genes).to_list()
-    edges = None
-
-    if len(valid_genes) > 0:
-        top_n_genes_df = subset_rank_df.loc[:, valid_genes]
-        valid_genes_values = [i + "_values" for i in valid_genes]
-        top_n_genes_values_df = subset_rank_df.loc[:, valid_genes_values]
-
-        for cur_gene in valid_genes:
-            targets = list(set(top_n_genes_df[cur_gene].values).intersection(valid_genes))
-            t_n = len(targets)
-
-            if t_n > 0:
-                targets_inds = [list(top_n_genes_df[cur_gene].values).index(i) for i in targets]
-
-                targets_values = top_n_genes_values_df.loc[:, cur_gene + "_values"].iloc[targets_inds].values
-
-                if rank_regulators:
-                    tmp = pd.DataFrame(
-                        {
-                            "regulator": targets,
-                            "target": np.repeat(cur_gene, t_n),
-                            "weight": targets_values,
-                        }
-                    )
-                else:
-                    tmp = pd.DataFrame(
-                        {
-                            "regulator": np.repeat(cur_gene, t_n),
-                            "target": targets,
-                            "weight": targets_values,
-                        }
-                    )
-
-                edges = tmp if edges is None else pd.concat((edges, tmp), axis=0)
-
-    return edges
-
-
 def build_network_per_cluster(
     adata: AnnData,
     cluster: str,
@@ -168,6 +103,71 @@ def build_network_per_cluster(
             edges_list[c] = pd.concat((reg_df, eff_df), axis=0)
 
     return edges_list
+
+
+def get_interaction_in_cluster(
+    rank_df_dict: Dict[str, pd.DataFrame],
+    group: str,
+    genes: List,
+    n_top_genes: int = 100,
+    rank_regulators: bool = False,
+    negative_values: bool = False,
+) -> pd.DataFrame:
+    """Retrieve interactions among input genes given the ranking dataframe.
+
+    Args:
+        rank_df_dict: The dictionary of pandas data frame storing the gene ranking information for each cluster.
+        group: The group name that points to the key for the rank_df.
+        genes: The list of input genes, from which the network will be constructed.
+        n_top_genes: Number of top genes that will be selected from to build the network.
+        rank_regulators: Whether the input dictionary is about ranking top regulators of each gene per cluster.
+
+    Returns:
+        A dataframe of interactions between input genes for the specified group of cells based on ranking information
+        of Jacobian analysis. It has `regulator`, `target` and `weight` three columns.
+
+    """
+
+    subset_rank_df = rank_df_dict[group].head(n_top_genes)
+    if negative_values:
+        subset_rank_df = pd.concat([subset_rank_df, rank_df_dict[group].tail(n_top_genes)])
+    valid_genes = subset_rank_df.columns.intersection(genes).to_list()
+    edges = None
+
+    if len(valid_genes) > 0:
+        top_n_genes_df = subset_rank_df.loc[:, valid_genes]
+        valid_genes_values = [i + "_values" for i in valid_genes]
+        top_n_genes_values_df = subset_rank_df.loc[:, valid_genes_values]
+
+        for cur_gene in valid_genes:
+            targets = list(set(top_n_genes_df[cur_gene].values).intersection(valid_genes))
+            t_n = len(targets)
+
+            if t_n > 0:
+                targets_inds = [list(top_n_genes_df[cur_gene].values).index(i) for i in targets]
+
+                targets_values = top_n_genes_values_df.loc[:, cur_gene + "_values"].iloc[targets_inds].values
+
+                if rank_regulators:
+                    tmp = pd.DataFrame(
+                        {
+                            "regulator": targets,
+                            "target": np.repeat(cur_gene, t_n),
+                            "weight": targets_values,
+                        }
+                    )
+                else:
+                    tmp = pd.DataFrame(
+                        {
+                            "regulator": np.repeat(cur_gene, t_n),
+                            "target": targets,
+                            "weight": targets_values,
+                        }
+                    )
+
+                edges = tmp if edges is None else pd.concat((edges, tmp), axis=0)
+
+    return edges
 
 
 def adj_list_to_matrix(
