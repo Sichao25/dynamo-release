@@ -6,6 +6,157 @@ import numpy as np
 import pandas as pd
 
 
+def Simulator(
+    motif: str = "neurongenesis", seed_num=19491001, clip: Optional[bool] = None, cell_num: int = 5000
+) -> anndata.AnnData:
+    """Simulate the gene expression dynamics via deterministic ODE model
+
+    Args:
+        motif: str (default: "neurongenesis")
+            Name of the network motif that will be used in the simulation. Can be one of {"neurongenesis", "toggle",
+            "two_genes", "Ying", "mixture_of_gaussian", "four_attractors"}. The last three models are equivalent.
+        clip: Whether to clip data points that are negative.
+        cell_num: Number of cells to simulate.
+
+    Returns:
+        An Annodata object containing the simulated data.
+    """
+
+    if motif == "toggle":
+        X, Y = state_space_sampler(
+            ode=toggle,
+            dim=2,
+            seed_num=seed_num,
+            min_val=0,
+            max_val=6,
+            N=cell_num,
+            clip=True if clip is None else clip,
+        )
+        gene_name = np.array(["X", "Y"])
+    elif motif == "neurongenesis":
+        X, Y = state_space_sampler(
+            ode=neurongenesis,
+            dim=13,
+            seed_num=seed_num,
+            min_val=0,
+            max_val=6,
+            N=cell_num,
+            clip=True if clip is None else clip,
+        )
+
+        gene_name = np.array(
+            [
+                "Pax6",  #
+                "Mash1",  #
+                "Brn2",
+                "Zic1",
+                "Tuj1",
+                "Hes5",  #
+                "Scl",  #
+                "Olig2",  #
+                "Stat3",
+                "Myt1L",
+                "Alhd1L",
+                "Sox8",
+                "Maturation",
+            ]
+        )
+    elif motif == "twogenes":
+        X, Y = state_space_sampler(
+            ode=ode_bifur2genes,
+            dim=2,
+            min_val=0,
+            max_val=4,
+            N=cell_num,
+            clip=True if clip is None else clip,
+        )
+        gene_name = np.array(["Pu.1", "Gata.1"])
+    elif motif in ["Ying", "mixture_of_gaussian", "four_attractors"]:
+        X, Y = state_space_sampler(
+            ode=Ying_model,
+            dim=2,
+            min_val=-3,
+            max_val=3,
+            N=cell_num,
+            clip=False if clip is None else clip,  # Y can be smaller than 0
+        )
+        gene_name = np.array(["X", "Y"])
+
+    var = pd.DataFrame({"gene_short_name": gene_name})  # use the real name in simulation?
+    var.set_index("gene_short_name", inplace=True)
+
+    # provide more annotation for cells next:
+    cell_ids = ["cell_%d" % (i) for i in range(cell_num)]  # first n_traj and then steps
+    obs = pd.DataFrame({"Cell_name": cell_ids})
+    obs.set_index("Cell_name", inplace=True)
+
+    layers = {"velocity": Y - X}  # ambiguous is required for velocyto
+
+    adata = anndata.AnnData(X.copy(), obs.copy(), var.copy(), layers=layers.copy())
+
+    # remove cells that has no expression
+    adata = adata[adata.X.sum(1) > 0, :] if clip else adata
+
+    return adata
+
+
+def state_space_sampler(
+    ode: Callable,
+    dim: int,
+    seed_num: int = 19491001,
+    clip: bool = True,
+    min_val: float = 0,
+    max_val: float = 4,
+    N: int = 10000,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Sample N points from the dim dimension gene expression space while restricting the values to be between min_val
+    and max_val. Velocity vector at the sampled points will be calculated according to ode function.
+
+    Args:
+        ode: The ODE function that will be used to calculate the velocity vector at the sampled points.
+        dim: The dimension of the gene expression space.
+        seed_num: The seed number for the random number generator. Defaults to 19491001.
+        clip: Whether to clip data points that are negative. Defaults to True.
+        min_val: The minimum value of the gene expression space. Defaults to 0.
+        max_val: The maximum value of the gene expression space. Defaults to 4.
+        N: The number of points to sample. Defaults to 10000.
+
+    Returns:
+        The sampled points from the gene expression space and the corresponding velocity vector.
+    """
+
+    seed(seed_num)
+    X = np.array([[uniform(min_val, max_val) for _ in range(dim)] for _ in range(N)])
+    Y = np.clip(X + ode(X), a_min=min_val, a_max=None) if clip else X + ode(X)
+
+    return X, Y
+
+
+def toggle(
+    ab: Union[np.ndarray, Tuple[float, float]], beta: float = 5, gamma: float = 1, n: int = 2
+) -> np.ndarray:
+    """Calculates the right-hand side (RHS) of the differential equations for the toggle switch system.
+
+    Args:
+        ab: An array or tuple containing the values of the variables a and b.
+        t: Time variable. Defaults to None.
+        beta: The rate of activation of a by b. Defaults to 5.
+        gamma: The rate of activation of b by a. Defaults to 1.
+        n: The Hill coefficient. Defaults to 2.
+
+    Returns:
+        The RHS of the differential equations for the toggle switch system, calculated using the given input parameters.
+    """
+    if len(ab.shape) == 2:
+        a, b = ab[:, 0], ab[:, 1]
+        res = np.array([beta / (1 + b**n) - a, gamma * (beta / (1 + a**n) - b)]).T
+    else:
+        a, b = ab
+        res = np.array([beta / (1 + b**n) - a, gamma * (beta / (1 + a**n) - b)])
+
+    return res
+
+
 # TODO: import from here in ..estimation.fit_jacobian.py
 def hill_inh_func(x: float, A: float, K: float, n: float, g: float = 0) -> float:
     """Calculates the Hill inhibition function for a given input.
@@ -75,29 +226,36 @@ def hill_act_grad(x: float, A: float, K: float, n: float, g: float = 0) -> float
     return A * n * Kd * x ** (n - 1) / (Kd + x**n) ** 2 - g
 
 
-def toggle(
-    ab: Union[np.ndarray, Tuple[float, float]], beta: float = 5, gamma: float = 1, n: int = 2
-) -> np.ndarray:
-    """Calculates the right-hand side (RHS) of the differential equations for the toggle switch system.
+def hill_inh_grad2(x: float, A: float, K: float, n: float) -> float:
+    """Calculates the second derivative of the Hill inhibition function for a given input.
 
     Args:
-        ab: An array or tuple containing the values of the variables a and b.
-        t: Time variable. Defaults to None.
-        beta: The rate of activation of a by b. Defaults to 5.
-        gamma: The rate of activation of b by a. Defaults to 1.
-        n: The Hill coefficient. Defaults to 2.
+        x: Input value for which the second derivative of the Hill inhibition function is to be calculated.
+        A: Scaling factor for the output of the function.
+        K: Concentration at which half-maximal inhibition occurs.
+        n: Hill coefficient, which describes the steepness of the function's curve.
 
     Returns:
-        The RHS of the differential equations for the toggle switch system, calculated using the given input parameters.
+        The value of the second derivative of the Hill inhibition function for the given input.
     """
-    if len(ab.shape) == 2:
-        a, b = ab[:, 0], ab[:, 1]
-        res = np.array([beta / (1 + b**n) - a, gamma * (beta / (1 + a**n) - b)]).T
-    else:
-        a, b = ab
-        res = np.array([beta / (1 + b**n) - a, gamma * (beta / (1 + a**n) - b)])
+    Kd = K**n
+    return A * n * Kd * x ** (n - 2) * ((n + 1) * x**n - Kd * n + Kd) / (Kd + x**n) ** 3
 
-    return res
+
+def hill_act_grad2(x: float, A: float, K: float, n: float) -> float:
+    """Calculates the second derivative of the Hill activation function for a given input.
+
+    Args:
+        x: Input value for which the second derivative of the Hill activation function is to be calculated.
+        A: Scaling factor for the output of the function.
+        K: Concentration at which half-maximal activation occurs.
+        n: Hill coefficient, which describes the steepness of the function's curve.
+
+    Returns:
+        The value of the second derivative of the Hill activation function for the given input.
+    """
+    Kd = K**n
+    return -A * n * Kd * x ** (n - 2) * ((n + 1) * x**n - Kd * n + Kd) / (Kd + x**n) ** 3
 
 
 def Ying_model(x: np.ndarray):
@@ -277,38 +435,6 @@ def two_genes_motif_jacobian(x1: float, x2: float) -> np.ndarray:
         ]
     )
     return J
-
-
-def hill_inh_grad2(x: float, A: float, K: float, n: float) -> float:
-    """Calculates the second derivative of the Hill inhibition function for a given input.
-
-    Args:
-        x: Input value for which the second derivative of the Hill inhibition function is to be calculated.
-        A: Scaling factor for the output of the function.
-        K: Concentration at which half-maximal inhibition occurs.
-        n: Hill coefficient, which describes the steepness of the function's curve.
-
-    Returns:
-        The value of the second derivative of the Hill inhibition function for the given input.
-    """
-    Kd = K**n
-    return A * n * Kd * x ** (n - 2) * ((n + 1) * x**n - Kd * n + Kd) / (Kd + x**n) ** 3
-
-
-def hill_act_grad2(x: float, A: float, K: float, n: float) -> float:
-    """Calculates the second derivative of the Hill activation function for a given input.
-
-    Args:
-        x: Input value for which the second derivative of the Hill activation function is to be calculated.
-        A: Scaling factor for the output of the function.
-        K: Concentration at which half-maximal activation occurs.
-        n: Hill coefficient, which describes the steepness of the function's curve.
-
-    Returns:
-        The value of the second derivative of the Hill activation function for the given input.
-    """
-    Kd = K**n
-    return -A * n * Kd * x ** (n - 2) * ((n + 1) * x**n - Kd * n + Kd) / (Kd + x**n) ** 3
 
 
 def hessian_bifur2genes(
@@ -520,129 +646,3 @@ def neurongenesis(
         dx[12] = mature_mu * (1 - x[12] / mx)
 
     return dx
-
-
-def state_space_sampler(
-    ode: Callable,
-    dim: int,
-    seed_num: int = 19491001,
-    clip: bool = True,
-    min_val: float = 0,
-    max_val: float = 4,
-    N: int = 10000,
-) -> Tuple[np.ndarray, np.ndarray]:
-    """Sample N points from the dim dimension gene expression space while restricting the values to be between min_val
-    and max_val. Velocity vector at the sampled points will be calculated according to ode function.
-
-    Args:
-        ode: The ODE function that will be used to calculate the velocity vector at the sampled points.
-        dim: The dimension of the gene expression space.
-        seed_num: The seed number for the random number generator. Defaults to 19491001.
-        clip: Whether to clip data points that are negative. Defaults to True.
-        min_val: The minimum value of the gene expression space. Defaults to 0.
-        max_val: The maximum value of the gene expression space. Defaults to 4.
-        N: The number of points to sample. Defaults to 10000.
-
-    Returns:
-        The sampled points from the gene expression space and the corresponding velocity vector.
-    """
-
-    seed(seed_num)
-    X = np.array([[uniform(min_val, max_val) for _ in range(dim)] for _ in range(N)])
-    Y = np.clip(X + ode(X), a_min=min_val, a_max=None) if clip else X + ode(X)
-
-    return X, Y
-
-
-def Simulator(
-    motif: str = "neurongenesis", seed_num=19491001, clip: Optional[bool] = None, cell_num: int = 5000
-) -> anndata.AnnData:
-    """Simulate the gene expression dynamics via deterministic ODE model
-
-    Args:
-        motif: str (default: "neurongenesis")
-            Name of the network motif that will be used in the simulation. Can be one of {"neurongenesis", "toggle",
-            "two_genes", "Ying", "mixture_of_gaussian", "four_attractors"}. The last three models are equivalent.
-        clip: Whether to clip data points that are negative.
-        cell_num: Number of cells to simulate.
-
-    Returns:
-        An Annodata object containing the simulated data.
-    """
-
-    if motif == "toggle":
-        X, Y = state_space_sampler(
-            ode=toggle,
-            dim=2,
-            seed_num=seed_num,
-            min_val=0,
-            max_val=6,
-            N=cell_num,
-            clip=True if clip is None else clip,
-        )
-        gene_name = np.array(["X", "Y"])
-    elif motif == "neurongenesis":
-        X, Y = state_space_sampler(
-            ode=neurongenesis,
-            dim=13,
-            seed_num=seed_num,
-            min_val=0,
-            max_val=6,
-            N=cell_num,
-            clip=True if clip is None else clip,
-        )
-
-        gene_name = np.array(
-            [
-                "Pax6",  #
-                "Mash1",  #
-                "Brn2",
-                "Zic1",
-                "Tuj1",
-                "Hes5",  #
-                "Scl",  #
-                "Olig2",  #
-                "Stat3",
-                "Myt1L",
-                "Alhd1L",
-                "Sox8",
-                "Maturation",
-            ]
-        )
-    elif motif == "twogenes":
-        X, Y = state_space_sampler(
-            ode=ode_bifur2genes,
-            dim=2,
-            min_val=0,
-            max_val=4,
-            N=cell_num,
-            clip=True if clip is None else clip,
-        )
-        gene_name = np.array(["Pu.1", "Gata.1"])
-    elif motif in ["Ying", "mixture_of_gaussian", "four_attractors"]:
-        X, Y = state_space_sampler(
-            ode=Ying_model,
-            dim=2,
-            min_val=-3,
-            max_val=3,
-            N=cell_num,
-            clip=False if clip is None else clip,  # Y can be smaller than 0
-        )
-        gene_name = np.array(["X", "Y"])
-
-    var = pd.DataFrame({"gene_short_name": gene_name})  # use the real name in simulation?
-    var.set_index("gene_short_name", inplace=True)
-
-    # provide more annotation for cells next:
-    cell_ids = ["cell_%d" % (i) for i in range(cell_num)]  # first n_traj and then steps
-    obs = pd.DataFrame({"Cell_name": cell_ids})
-    obs.set_index("Cell_name", inplace=True)
-
-    layers = {"velocity": Y - X}  # ambiguous is required for velocyto
-
-    adata = anndata.AnnData(X.copy(), obs.copy(), var.copy(), layers=layers.copy())
-
-    # remove cells that has no expression
-    adata = adata[adata.X.sum(1) > 0, :] if clip else adata
-
-    return adata
