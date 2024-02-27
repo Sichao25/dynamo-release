@@ -21,113 +21,6 @@ from .utils import integrate_streamline
 # from sklearn.preprocessing import OrdinalEncoder
 
 
-def classify_clone_cell_type(
-    adata: AnnData,
-    clone: str,
-    clone_column: str,
-    cell_type_column: str,
-    cell_type_to_excluded: Union[List, str],
-) -> str:
-    """Find the dominant cell type of all the cells that are from the given clone.
-
-    Args:
-        adata: AnnData object.
-        clone: The clone name that specifies the clone group used to find the dominant cell type.
-        clone_column: The column name in `adata.obs` that corresponds to the clone information.
-        cell_type_column: The column name in `adata.obs` that corresponds to cell type information.
-        cell_type_to_excluded: The cell type name that will be excluded from the dominant cell type calculation.
-
-    Returns:
-        The dominant cell type of all the cells that are from the given clone.
-    """
-    cell_ids = np.where(adata.obs[clone_column] == clone)[0]
-    cell_types_counts = adata[cell_ids].obs[cell_type_column].value_counts()
-    to_check = cell_types_counts.index.isin(list(cell_type_to_excluded))
-    return cell_types_counts[np.where(~to_check)[0]].index[0]
-
-
-def prune_transition(
-    adata: anndata.AnnData,
-    group: str,
-    basis: str = "umap",
-    n_neighbors: int = 30,
-    neighbor_key: Union[str, None] = None,
-    graph_mat: np.ndarray = None,
-    state_graph_method: str = "vf",
-) -> np.ndarray:
-    """This function prune a cell group transiton graph based on cell similarity graph (kNN graph).
-
-    The pruning algorithm is as following: assuming the vf based cell-type transition graph is `m` (cell type x cell
-    type matrix); the `M` matrix as the cell to cell-type assignment matrix (row is the cell and column the cell type;
-    if i-th cell is j-th cell type, the `M_{ij}` is 1). the knn graph between cells based on the umap embedding (or
-    others) is `n` (number of cells x number of cells matrix). We compute `t(M) n M` to get a cell-type by cell type
-    connectivity graph M' (basically this propagates the cell type to cell matrix to the cell-cell knn graph and then
-    lump the transition down to cell-type). Lastly, `g * M'`  will give pruned graph, where `g` is the vector field
-    based cell-type transition graph. As you can see the resultant graph considers both vector field based connection
-    and the similarity relationship of cells in expression space.
-
-    Args:
-        adata: AnnData object.
-        group: Cell graph that will be used to build transition graph and lineage tree.
-        basis: The basis that will be used to build the k-nearest neighbor graph when neighbor_key is not set.
-        n_neighbors: The number of neighbors that will be used to build the k-nn graph, passed to `dyn.tl.neighbors` function. Not
-            used when neighbor_key provided.
-        neighbor_key: The nearest neighbor graph key in `adata.obsp`. This nearest neighbor graph will be used to build a
-            gene-expression space based cell-type level connectivity graph.
-        state_graph_method: Method that will be used to build the initial state graph.
-
-    Returns:
-        M: The pruned cell state transition graph.
-    """
-
-    logger = LoggerManager.gen_logger("dynamo-prune_transition")
-    logger.log_time()
-    from patsy import dmatrix
-
-    if group not in adata.obs.columns:
-        raise Exception(f"group has to be in adata.obs.columns, but you have {group}. ")
-
-    data = adata.obs
-    groups = data[group]
-    uniq_grps, data[group] = groups.unique(), list(groups)
-    sorted_grps = np.sort(uniq_grps)
-
-    if graph_mat is not None:
-        if graph_mat.shape != (len(uniq_grps), len(uniq_grps)):
-            raise Exception(f"the input graph_mat has to have the same shape as ({len(uniq_grps), len(uniq_grps)})")
-
-        group_graph = graph_mat
-    else:
-        if group + "_graph" not in adata.uns_keys():
-            main_info(f"build state graph `g` via {state_graph_method}")
-            state_graph(adata, group=group, basis=basis, method=state_graph_method)  # the markov method
-        group_graph = adata.uns[group + "_graph"]["group_graph"]
-
-    if neighbor_key is None:
-        main_info(f"build knn graph with {n_neighbors} neighbors in {basis} basis.")
-        neighbors(adata, basis=basis, result_prefix=basis + "_knn", n_neighbors=n_neighbors)
-        transition_matrix = adata.obsp[basis + "_knn_distances"]
-    else:
-        main_info(f"retrieve knn graph via {neighbor_key} ley.")
-        transition_matrix = adata.obsp[neighbor_key]
-
-    main_info("build cell to cell graph assignment matrix via `dmatrix` from `pasty`")
-    cell_membership = csr_matrix(dmatrix(f"~{group}+0", data=data))
-
-    main_info("build lumped cell group to cell group connectivity matrix via `t(M) n M`.")
-    membership_matrix = cell_membership.T.dot(transition_matrix).dot(cell_membership)
-
-    main_info("prune vf based cell graph transition graph via g' = `M' g")
-    # note that dmatrix will first sort the unique group names and then construct the design matrix, so this is needed.
-    membership_df = pd.DataFrame(membership_matrix.A > 0, index=sorted_grps, columns=sorted_grps)
-
-    M = (group_graph * (membership_df.loc[uniq_grps, uniq_grps].values > 0) > 0).astype(float)
-
-    logger.finish_progress(progress_name="prune_transition")
-
-    return M
-
-
 def state_graph(
     adata: AnnData,
     group: str,
@@ -445,3 +338,110 @@ def tree_model(
     logger.finish_progress(progress_name="tree_model building")
 
     return res
+
+
+def classify_clone_cell_type(
+    adata: AnnData,
+    clone: str,
+    clone_column: str,
+    cell_type_column: str,
+    cell_type_to_excluded: Union[List, str],
+) -> str:
+    """Find the dominant cell type of all the cells that are from the given clone.
+
+    Args:
+        adata: AnnData object.
+        clone: The clone name that specifies the clone group used to find the dominant cell type.
+        clone_column: The column name in `adata.obs` that corresponds to the clone information.
+        cell_type_column: The column name in `adata.obs` that corresponds to cell type information.
+        cell_type_to_excluded: The cell type name that will be excluded from the dominant cell type calculation.
+
+    Returns:
+        The dominant cell type of all the cells that are from the given clone.
+    """
+    cell_ids = np.where(adata.obs[clone_column] == clone)[0]
+    cell_types_counts = adata[cell_ids].obs[cell_type_column].value_counts()
+    to_check = cell_types_counts.index.isin(list(cell_type_to_excluded))
+    return cell_types_counts[np.where(~to_check)[0]].index[0]
+
+
+def prune_transition(
+    adata: anndata.AnnData,
+    group: str,
+    basis: str = "umap",
+    n_neighbors: int = 30,
+    neighbor_key: Union[str, None] = None,
+    graph_mat: np.ndarray = None,
+    state_graph_method: str = "vf",
+) -> np.ndarray:
+    """This function prune a cell group transiton graph based on cell similarity graph (kNN graph).
+
+    The pruning algorithm is as following: assuming the vf based cell-type transition graph is `m` (cell type x cell
+    type matrix); the `M` matrix as the cell to cell-type assignment matrix (row is the cell and column the cell type;
+    if i-th cell is j-th cell type, the `M_{ij}` is 1). the knn graph between cells based on the umap embedding (or
+    others) is `n` (number of cells x number of cells matrix). We compute `t(M) n M` to get a cell-type by cell type
+    connectivity graph M' (basically this propagates the cell type to cell matrix to the cell-cell knn graph and then
+    lump the transition down to cell-type). Lastly, `g * M'`  will give pruned graph, where `g` is the vector field
+    based cell-type transition graph. As you can see the resultant graph considers both vector field based connection
+    and the similarity relationship of cells in expression space.
+
+    Args:
+        adata: AnnData object.
+        group: Cell graph that will be used to build transition graph and lineage tree.
+        basis: The basis that will be used to build the k-nearest neighbor graph when neighbor_key is not set.
+        n_neighbors: The number of neighbors that will be used to build the k-nn graph, passed to `dyn.tl.neighbors` function. Not
+            used when neighbor_key provided.
+        neighbor_key: The nearest neighbor graph key in `adata.obsp`. This nearest neighbor graph will be used to build a
+            gene-expression space based cell-type level connectivity graph.
+        state_graph_method: Method that will be used to build the initial state graph.
+
+    Returns:
+        M: The pruned cell state transition graph.
+    """
+
+    logger = LoggerManager.gen_logger("dynamo-prune_transition")
+    logger.log_time()
+    from patsy import dmatrix
+
+    if group not in adata.obs.columns:
+        raise Exception(f"group has to be in adata.obs.columns, but you have {group}. ")
+
+    data = adata.obs
+    groups = data[group]
+    uniq_grps, data[group] = groups.unique(), list(groups)
+    sorted_grps = np.sort(uniq_grps)
+
+    if graph_mat is not None:
+        if graph_mat.shape != (len(uniq_grps), len(uniq_grps)):
+            raise Exception(f"the input graph_mat has to have the same shape as ({len(uniq_grps), len(uniq_grps)})")
+
+        group_graph = graph_mat
+    else:
+        if group + "_graph" not in adata.uns_keys():
+            main_info(f"build state graph `g` via {state_graph_method}")
+            state_graph(adata, group=group, basis=basis, method=state_graph_method)  # the markov method
+        group_graph = adata.uns[group + "_graph"]["group_graph"]
+
+    if neighbor_key is None:
+        main_info(f"build knn graph with {n_neighbors} neighbors in {basis} basis.")
+        neighbors(adata, basis=basis, result_prefix=basis + "_knn", n_neighbors=n_neighbors)
+        transition_matrix = adata.obsp[basis + "_knn_distances"]
+    else:
+        main_info(f"retrieve knn graph via {neighbor_key} ley.")
+        transition_matrix = adata.obsp[neighbor_key]
+
+    main_info("build cell to cell graph assignment matrix via `dmatrix` from `pasty`")
+    cell_membership = csr_matrix(dmatrix(f"~{group}+0", data=data))
+
+    main_info("build lumped cell group to cell group connectivity matrix via `t(M) n M`.")
+    membership_matrix = cell_membership.T.dot(transition_matrix).dot(cell_membership)
+
+    main_info("prune vf based cell graph transition graph via g' = `M' g")
+    # note that dmatrix will first sort the unique group names and then construct the design matrix, so this is needed.
+    membership_df = pd.DataFrame(membership_matrix.A > 0, index=sorted_grps, columns=sorted_grps)
+
+    M = (group_graph * (membership_df.loc[uniq_grps, uniq_grps].values > 0) > 0).astype(float)
+
+    logger.finish_progress(progress_name="prune_transition")
+
+    return M

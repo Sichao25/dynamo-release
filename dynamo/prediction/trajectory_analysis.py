@@ -18,89 +18,6 @@ from ..utils import areinstance, isarray
 from .trajectory import Trajectory
 
 
-def calc_mean_exit_time(trajectories: List[Trajectory], in_init_state: Callable, in_sink_state: Callable) -> float:
-    """Calculates the mean exit time (MET) from the initial state to the sink state for a list of trajectories.
-
-    Args:
-        trajectories: A list of trajectories.
-        in_init_state: A callable that takes a state as an argument and returns a boolean indicating whether
-            the state is in the initial state.
-        in_sink_state: A callable that takes a state as an argument and returns a boolean indicating whether
-            the state is in the sink state.
-
-    Returns:
-        The mean exit time from the initial state to the sink state for the list of trajectories.
-
-    Raises:
-        ValueError: If no trajectory reaches the sink state.
-
-    """
-    met = []
-    for traj in trajectories:
-        t_init = -1
-        for j, c in enumerate(traj.X):
-            t = traj.t[j]
-            if in_init_state(c):
-                t_init = t
-            if t_init > 0 and in_sink_state(c):
-                met.append(t - t_init)
-                break
-    return np.mean(met)
-
-
-def calc_mean_first_passage_time(
-    trajectories: List[Trajectory], in_init_state: Callable, in_target_state: Callable, in_sink_state: Callable
-) -> float:
-    """Calculates the mean first-passage time (MFPT) from the initial state to the target state for a list of trajectories.
-
-    Args:
-        trajectories: A list of trajectories.
-        in_init_state: A callable that takes a state as an argument and returns a boolean indicating whether
-            the state is in the initial state.
-        in_target_state: A callable that takes a state as an argument and returns a boolean indicating whether
-            the state is in the target state.
-        in_sink_state: A callable that takes a state as an argument and returns a boolean indicating whether
-            the state is in the sink state.
-
-    Returns:
-        The mean first-passage time from the initial state to the target state for the list of trajectories.
-
-    Raises:
-        ValueError: If no trajectory reaches the target state.
-    """
-    mfpt = []
-    for traj in trajectories:
-        t_init = -1
-        for j, c in enumerate(traj.X):
-            t = traj.t[j]
-            if in_init_state(c):
-                t_init = t
-            if t_init > 0:
-                if in_target_state(c) and not in_sink_state(c):
-                    mfpt.append(t - t_init)
-                    break
-                elif in_sink_state(c):
-                    break
-    return np.mean(mfpt)
-
-
-def is_in_state(x: np.ndarray, centers: np.ndarray, radius: float) -> bool:
-    """Checks whether a point is within a given radius of any center point in a set of centers.
-
-    Args:
-        x: The point to check.
-        centers: The set of center points.
-        radius: The radius within which to consider a point to be in a state.
-
-    Returns:
-        True if the point is within the given radius of any center point, False otherwise.
-    """
-    in_state = False
-    if np.min(np.linalg.norm(x - np.atleast_2d(centers), axis=1)) <= radius:
-        in_state = True
-    return in_state
-
-
 def mean_first_passage_time(
     adata: AnnData,
     sink_states: Union[list, np.ndarray, Callable],
@@ -195,3 +112,86 @@ def mean_first_passage_time(
         )
 
     return mfpt
+
+
+def calc_mean_exit_time(trajectories: List[Trajectory], in_init_state: Callable, in_sink_state: Callable) -> float:
+    """Calculates the mean exit time (MET) from the initial state to the sink state for a list of trajectories.
+
+    Args:
+        trajectories: A list of trajectories.
+        in_init_state: A callable that takes a state as an argument and returns a boolean indicating whether
+            the state is in the initial state.
+        in_sink_state: A callable that takes a state as an argument and returns a boolean indicating whether
+            the state is in the sink state.
+
+    Returns:
+        The mean exit time from the initial state to the sink state for the list of trajectories.
+
+    Raises:
+        ValueError: If no trajectory reaches the sink state.
+
+    """
+    met = []
+    for traj in trajectories:
+        t_init = -1
+        for j, c in enumerate(traj.X):
+            t = traj.t[j]
+            if in_init_state(c):
+                t_init = t
+            if t_init > 0 and in_sink_state(c):
+                met.append(t - t_init)
+                break
+    return np.mean(met)
+
+
+def calc_mean_first_passage_time(
+    trajectories: List[Trajectory], in_init_state: Callable, in_target_state: Callable, in_sink_state: Callable
+) -> float:
+    """Calculates the mean first-passage time (MFPT) from the initial state to the target state for a list of trajectories.
+
+    Args:
+        trajectories: A list of trajectories.
+        in_init_state: A callable that takes a state as an argument and returns a boolean indicating whether
+            the state is in the initial state.
+        in_target_state: A callable that takes a state as an argument and returns a boolean indicating whether
+            the state is in the target state.
+        in_sink_state: A callable that takes a state as an argument and returns a boolean indicating whether
+            the state is in the sink state.
+
+    Returns:
+        The mean first-passage time from the initial state to the target state for the list of trajectories.
+
+    Raises:
+        ValueError: If no trajectory reaches the target state.
+    """
+    mfpt = []
+    for traj in trajectories:
+        t_init = -1
+        for j, c in enumerate(traj.X):
+            t = traj.t[j]
+            if in_init_state(c):
+                t_init = t
+            if t_init > 0:
+                if in_target_state(c) and not in_sink_state(c):
+                    mfpt.append(t - t_init)
+                    break
+                elif in_sink_state(c):
+                    break
+    return np.mean(mfpt)
+
+
+def is_in_state(x: np.ndarray, centers: np.ndarray, radius: float) -> bool:
+    """Checks whether a point is within a given radius of any center point in a set of centers.
+
+    Args:
+        x: The point to check.
+        centers: The set of center points.
+        radius: The radius within which to consider a point to be in a state.
+
+    Returns:
+        True if the point is within the given radius of any center point, False otherwise.
+    """
+    in_state = False
+    if np.min(np.linalg.norm(x - np.atleast_2d(centers), axis=1)) <= radius:
+        in_state = True
+    return in_state

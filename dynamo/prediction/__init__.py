@@ -22,7 +22,7 @@ from .trajectory_analysis import (
     calc_mean_first_passage_time,
     mean_first_passage_time,
 )
-from .tscRNA_seq import get_pulse_r0
+from .tscRNA_analysis import get_pulse_r0
 
 # https://stackoverflow.com/questions/31079047/python-pep8-class-in-init-imported-but-not-used
 __all__ = [

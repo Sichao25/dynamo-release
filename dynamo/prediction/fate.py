@@ -157,188 +157,6 @@ def fate(
     return adata
 
 
-def _fate(
-    VecFld: Callable,
-    init_states: np.ndarray,
-    t_end: Optional[float] = None,
-    step_size: Optional[float] = None,
-    direction: str = "both",
-    interpolation_num: int = 250,
-    average: bool = True,
-    sampling: str = "arc_length",
-    cores: int = 1,
-) -> Tuple[np.ndarray, np.ndarray]:
-    """Predict the historical and future cell transcriptomic states over arbitrary time scales by integrating vector
-    field functions from one or a set of initial cell state(s).
-
-    Args:
-        VecFld: Functional form of the vector field reconstructed from sparse single cell samples. It is applicable to the
-            entire transcriptomic space.
-        init_states: Initial cell states for the historical or future cell state prediction with numerical integration.
-        t_end: The length of the time period from which to predict cell state forward or backward over time. This is used
-            by the odeint function.
-        step_size: Step size for integrating the future or history cell state, used by the odeint function. By default it is
-            None, and the step_size will be automatically calculated to ensure 250 total integration time-steps will be
-            used.
-        direction: The direction to predict the cell fate. One of the `forward`, `backward`or `both` string.
-        interpolation_num: The number of uniformly interpolated time points.
-        average: A boolean flag to determine whether to smooth the trajectory by calculating the average cell state at each
-            time step.
-        sampling: Methods to sample points along the integration path, one of `{'arc_length', 'logspace', 'uniform_indices'}`.
-            If `logspace`, we will sample time points linearly on log space. If `uniform_indices`, the sorted unique set
-            of all time points from all cell states' fate prediction will be used and then evenly sampled up to
-            `interpolation_num` time points. If `arc_length`, we will sample the integration path with uniform arc
-            length.
-        cores: Number of cores to calculate path integral for predicting cell fate. If cores is set to be > 1,
-            multiprocessing will be used to parallel the fate prediction.
-
-    Returns:
-        A tuple containing two elements:
-            t: The time at which the cell state are predicted.
-            prediction: Predicted cells states at different time points. Row order corresponds to the element order in
-                t. If init_states corresponds to multiple cells, the expression dynamics over time for each cell is
-                concatenated by rows. That is, the final dimension of prediction is (len(t) * n_cells, n_features).
-                n_cells: number of cells; n_features: number of genes or number of low dimensional embeddings.
-                Of note, if the average is set to be True, the average cell state at each time point is calculated for
-                all cells.
-    """
-
-    if sampling == "uniform_indices":
-        main_warning(
-            f"Uniform_indices method sample data points from all time points. The multiprocessing will be disabled."
-        )
-        cores = 1
-
-    t_linspace = getTseq(init_states, t_end, step_size)
-
-    if cores == 1:
-        t, prediction = integrate_vf_ivp(
-            init_states,
-            t_linspace,
-            direction,
-            VecFld,
-            interpolation_num=interpolation_num,
-            average=average,
-            sampling=sampling,
-        )
-    else:
-        pool = ThreadPool(cores)
-        res = pool.starmap(
-            integrate_vf_ivp,
-            zip(
-                init_states,
-                itertools.repeat(t_linspace),
-                itertools.repeat(direction),
-                itertools.repeat(VecFld),
-                itertools.repeat(()),
-                itertools.repeat(interpolation_num),
-                itertools.repeat(average),
-                itertools.repeat(sampling),
-                itertools.repeat(False),
-                itertools.repeat(True),
-            ),
-        )  # disable tqdm when using multiple cores.
-        pool.close()
-        pool.join()
-        t_, prediction_ = zip(*res)
-        t, prediction = [i[0] for i in t_], [i[0] for i in prediction_]
-
-    if init_states.shape[0] > 1 and average:
-        t_stack, prediction_stack = np.hstack(t), np.hstack(prediction)
-        n_cell, n_feature = init_states.shape
-
-        t_len = int(len(t_stack) / n_cell)
-        avg = np.zeros((n_feature, t_len))
-
-        for i in range(t_len):
-            avg[:, i] = np.mean(prediction_stack[:, np.arange(n_cell) * t_len + i], 1)
-
-        prediction = [avg]
-        t = [np.sort(np.unique(t))]
-
-    return t, prediction
-
-
-def _inverse_transform(
-    adata: AnnData,
-    prediction: Union[np.ndarray, List[np.ndarray]],
-    basis: str = "umap",
-    Qkey: str = "PCs",
-) -> Tuple[Union[np.ndarray, List[np.ndarray]], np.ndarray]:
-    """Inverse transform the low dimensional vector field prediction back to high dimensional space.
-
-    Args:
-        adata: AnnData object that contains the reconstructed vector field function in the `uns` attribute.
-        prediction: Predicted cells states at different time points.
-        basis: The embedding data to use for predicting cell fate.
-        Qkey: The key of the PCA loading matrix in `.uns`.
-
-    Returns:
-        The predicted cells states at different time points in high dimensional space and the gene names whose gene
-        expression will be used for predicting cell fate.
-    """
-    if basis == "pca":
-        if type(prediction) == list:
-            exprs = [vector_transformation(cur_pred.T, adata.uns[Qkey]) for cur_pred in prediction]
-            high_p_n = exprs[0].shape[1]
-        else:
-            exprs = vector_transformation(prediction.T, adata.uns[Qkey])
-            high_p_n = exprs.shape[1]
-
-        if adata.var.use_for_dynamics.sum() == high_p_n:
-            valid_genes = adata.var_names[adata.var.use_for_dynamics]
-        else:
-            valid_genes = adata.var_names[adata.var.use_for_transition]
-
-    elif basis == "umap":
-        # this requires umap 0.4; reverse project to PCA space.
-        if hasattr(prediction, "ndim"):
-            if prediction.ndim == 1:
-                prediction = prediction[None, :]
-
-        params = adata.uns["umap_fit"]
-        umap_fit = construct_mapper_umap(
-            params["X_data"],
-            n_components=params["umap_kwargs"]["n_components"],
-            metric=params["umap_kwargs"]["metric"],
-            min_dist=params["umap_kwargs"]["min_dist"],
-            spread=params["umap_kwargs"]["spread"],
-            max_iter=params["umap_kwargs"]["max_iter"],
-            alpha=params["umap_kwargs"]["alpha"],
-            gamma=params["umap_kwargs"]["gamma"],
-            negative_sample_rate=params["umap_kwargs"]["negative_sample_rate"],
-            init_pos=params["umap_kwargs"]["init_pos"],
-            random_state=params["umap_kwargs"]["random_state"],
-            umap_kwargs=params["umap_kwargs"],
-        )
-
-        PCs = adata.uns[Qkey].T
-        exprs = []
-
-        for cur_pred in prediction:
-            expr = umap_fit.inverse_transform(cur_pred.T)
-
-            # further reverse project back to raw expression space
-            if PCs.shape[0] == expr.shape[1]:
-                expr = np.expm1(expr @ PCs + adata.uns["pca_mean"])
-
-            exprs.append(expr)
-
-        if adata.var.use_for_dynamics.sum() == exprs[0].shape[1]:
-            valid_genes = adata.var_names[adata.var.use_for_dynamics]
-        elif adata.var.use_for_transition.sum() == exprs[0].shape[1]:
-            valid_genes = adata.var_names[adata.var.use_for_transition]
-        else:
-            raise Exception(
-                "looks like a customized set of genes is used for pca analysis of the adata. "
-                "Try rerunning pca analysis with default settings for this function to work."
-            )
-    else:
-        raise ValueError(f"Inverse transform with basis {basis} is not supported.")
-
-    return exprs, valid_genes
-
-
 def fate_bias(
     adata: AnnData,
     group: str,
@@ -714,3 +532,185 @@ def andecestor(
     adata.obs.loc[nearest_cells, obs_key] = True
 
     logger.finish_progress(progress_name=f"predict {obs_key}")
+
+
+def _fate(
+    VecFld: Callable,
+    init_states: np.ndarray,
+    t_end: Optional[float] = None,
+    step_size: Optional[float] = None,
+    direction: str = "both",
+    interpolation_num: int = 250,
+    average: bool = True,
+    sampling: str = "arc_length",
+    cores: int = 1,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Predict the historical and future cell transcriptomic states over arbitrary time scales by integrating vector
+    field functions from one or a set of initial cell state(s).
+
+    Args:
+        VecFld: Functional form of the vector field reconstructed from sparse single cell samples. It is applicable to the
+            entire transcriptomic space.
+        init_states: Initial cell states for the historical or future cell state prediction with numerical integration.
+        t_end: The length of the time period from which to predict cell state forward or backward over time. This is used
+            by the odeint function.
+        step_size: Step size for integrating the future or history cell state, used by the odeint function. By default it is
+            None, and the step_size will be automatically calculated to ensure 250 total integration time-steps will be
+            used.
+        direction: The direction to predict the cell fate. One of the `forward`, `backward`or `both` string.
+        interpolation_num: The number of uniformly interpolated time points.
+        average: A boolean flag to determine whether to smooth the trajectory by calculating the average cell state at each
+            time step.
+        sampling: Methods to sample points along the integration path, one of `{'arc_length', 'logspace', 'uniform_indices'}`.
+            If `logspace`, we will sample time points linearly on log space. If `uniform_indices`, the sorted unique set
+            of all time points from all cell states' fate prediction will be used and then evenly sampled up to
+            `interpolation_num` time points. If `arc_length`, we will sample the integration path with uniform arc
+            length.
+        cores: Number of cores to calculate path integral for predicting cell fate. If cores is set to be > 1,
+            multiprocessing will be used to parallel the fate prediction.
+
+    Returns:
+        A tuple containing two elements:
+            t: The time at which the cell state are predicted.
+            prediction: Predicted cells states at different time points. Row order corresponds to the element order in
+                t. If init_states corresponds to multiple cells, the expression dynamics over time for each cell is
+                concatenated by rows. That is, the final dimension of prediction is (len(t) * n_cells, n_features).
+                n_cells: number of cells; n_features: number of genes or number of low dimensional embeddings.
+                Of note, if the average is set to be True, the average cell state at each time point is calculated for
+                all cells.
+    """
+
+    if sampling == "uniform_indices":
+        main_warning(
+            f"Uniform_indices method sample data points from all time points. The multiprocessing will be disabled."
+        )
+        cores = 1
+
+    t_linspace = getTseq(init_states, t_end, step_size)
+
+    if cores == 1:
+        t, prediction = integrate_vf_ivp(
+            init_states,
+            t_linspace,
+            direction,
+            VecFld,
+            interpolation_num=interpolation_num,
+            average=average,
+            sampling=sampling,
+        )
+    else:
+        pool = ThreadPool(cores)
+        res = pool.starmap(
+            integrate_vf_ivp,
+            zip(
+                init_states,
+                itertools.repeat(t_linspace),
+                itertools.repeat(direction),
+                itertools.repeat(VecFld),
+                itertools.repeat(()),
+                itertools.repeat(interpolation_num),
+                itertools.repeat(average),
+                itertools.repeat(sampling),
+                itertools.repeat(False),
+                itertools.repeat(True),
+            ),
+        )  # disable tqdm when using multiple cores.
+        pool.close()
+        pool.join()
+        t_, prediction_ = zip(*res)
+        t, prediction = [i[0] for i in t_], [i[0] for i in prediction_]
+
+    if init_states.shape[0] > 1 and average:
+        t_stack, prediction_stack = np.hstack(t), np.hstack(prediction)
+        n_cell, n_feature = init_states.shape
+
+        t_len = int(len(t_stack) / n_cell)
+        avg = np.zeros((n_feature, t_len))
+
+        for i in range(t_len):
+            avg[:, i] = np.mean(prediction_stack[:, np.arange(n_cell) * t_len + i], 1)
+
+        prediction = [avg]
+        t = [np.sort(np.unique(t))]
+
+    return t, prediction
+
+
+def _inverse_transform(
+    adata: AnnData,
+    prediction: Union[np.ndarray, List[np.ndarray]],
+    basis: str = "umap",
+    Qkey: str = "PCs",
+) -> Tuple[Union[np.ndarray, List[np.ndarray]], np.ndarray]:
+    """Inverse transform the low dimensional vector field prediction back to high dimensional space.
+
+    Args:
+        adata: AnnData object that contains the reconstructed vector field function in the `uns` attribute.
+        prediction: Predicted cells states at different time points.
+        basis: The embedding data to use for predicting cell fate.
+        Qkey: The key of the PCA loading matrix in `.uns`.
+
+    Returns:
+        The predicted cells states at different time points in high dimensional space and the gene names whose gene
+        expression will be used for predicting cell fate.
+    """
+    if basis == "pca":
+        if type(prediction) == list:
+            exprs = [vector_transformation(cur_pred.T, adata.uns[Qkey]) for cur_pred in prediction]
+            high_p_n = exprs[0].shape[1]
+        else:
+            exprs = vector_transformation(prediction.T, adata.uns[Qkey])
+            high_p_n = exprs.shape[1]
+
+        if adata.var.use_for_dynamics.sum() == high_p_n:
+            valid_genes = adata.var_names[adata.var.use_for_dynamics]
+        else:
+            valid_genes = adata.var_names[adata.var.use_for_transition]
+
+    elif basis == "umap":
+        # this requires umap 0.4; reverse project to PCA space.
+        if hasattr(prediction, "ndim"):
+            if prediction.ndim == 1:
+                prediction = prediction[None, :]
+
+        params = adata.uns["umap_fit"]
+        umap_fit = construct_mapper_umap(
+            params["X_data"],
+            n_components=params["umap_kwargs"]["n_components"],
+            metric=params["umap_kwargs"]["metric"],
+            min_dist=params["umap_kwargs"]["min_dist"],
+            spread=params["umap_kwargs"]["spread"],
+            max_iter=params["umap_kwargs"]["max_iter"],
+            alpha=params["umap_kwargs"]["alpha"],
+            gamma=params["umap_kwargs"]["gamma"],
+            negative_sample_rate=params["umap_kwargs"]["negative_sample_rate"],
+            init_pos=params["umap_kwargs"]["init_pos"],
+            random_state=params["umap_kwargs"]["random_state"],
+            umap_kwargs=params["umap_kwargs"],
+        )
+
+        PCs = adata.uns[Qkey].T
+        exprs = []
+
+        for cur_pred in prediction:
+            expr = umap_fit.inverse_transform(cur_pred.T)
+
+            # further reverse project back to raw expression space
+            if PCs.shape[0] == expr.shape[1]:
+                expr = np.expm1(expr @ PCs + adata.uns["pca_mean"])
+
+            exprs.append(expr)
+
+        if adata.var.use_for_dynamics.sum() == exprs[0].shape[1]:
+            valid_genes = adata.var_names[adata.var.use_for_dynamics]
+        elif adata.var.use_for_transition.sum() == exprs[0].shape[1]:
+            valid_genes = adata.var_names[adata.var.use_for_transition]
+        else:
+            raise Exception(
+                "looks like a customized set of genes is used for pca analysis of the adata. "
+                "Try rerunning pca analysis with default settings for this function to work."
+            )
+    else:
+        raise ValueError(f"Inverse transform with basis {basis} is not supported.")
+
+    return exprs, valid_genes
