@@ -9,27 +9,6 @@ from .scatters import scatters
 from .utils import _to_hex
 
 
-def hdbscan(adata: AnnData, basis: str = "umap", color: str = "hdbscan", *args, **kwargs) -> Optional[Axes]:
-    """Scatter plot for hdbscan clustering in selected basis.
-
-    Args:
-        adata: an AnnData object.
-        basis: the reduced dimension stored in adata.obsm. The specific basis key will be constructed in the following
-            priority if exits: 1) specific layer input + basis 2) X_ + basis 3) basis. E.g. if basis is PCA, `scatters`
-            is going to look for 1) if specific layer is spliced, `spliced_pca` 2) `X_pca` (dynamo convention) 3) `pca`.
-            Defaults to "umap".
-        color: any column names or gene expression, etc. that will be used for coloring cells. Defaults to "hdbscan".
-        *args: any other positional arguments passed to `dynamo.pl.scatters`.
-        **kwargs: any other keyword arguments passed to `dynamo.pl.scatters`.
-
-    Returns:
-        None would be returned in default and the plotted figure would be shown directly. If set
-        `save_show_or_return='return'` as a kwarg, the axes of the plot would be returned.
-    """
-
-    return scatters(adata, basis=basis, color=color, *args, **kwargs)
-
-
 def leiden(adata: AnnData, basis: str = "umap", color: str = "leiden", *args, **kwargs) -> Optional[Axes]:
     """Scatter plot for leiden community detection in selected basis.
 
@@ -64,6 +43,27 @@ def louvain(
             Defaults to "umap".
         color: any column names or gene expression, etc. that will be used for coloring cells. Defaults to "louvain".
         color_key_cmap: not used. Left here for backward compatibility. Defaults to "Spectral".
+        *args: any other positional arguments passed to `dynamo.pl.scatters`.
+        **kwargs: any other keyword arguments passed to `dynamo.pl.scatters`.
+
+    Returns:
+        None would be returned in default and the plotted figure would be shown directly. If set
+        `save_show_or_return='return'` as a kwarg, the axes of the plot would be returned.
+    """
+
+    return scatters(adata, basis=basis, color=color, *args, **kwargs)
+
+
+def hdbscan(adata: AnnData, basis: str = "umap", color: str = "hdbscan", *args, **kwargs) -> Optional[Axes]:
+    """Scatter plot for hdbscan clustering in selected basis.
+
+    Args:
+        adata: an AnnData object.
+        basis: the reduced dimension stored in adata.obsm. The specific basis key will be constructed in the following
+            priority if exits: 1) specific layer input + basis 2) X_ + basis 3) basis. E.g. if basis is PCA, `scatters`
+            is going to look for 1) if specific layer is spliced, `spliced_pca` 2) `X_pca` (dynamo convention) 3) `pca`.
+            Defaults to "umap".
+        color: any column names or gene expression, etc. that will be used for coloring cells. Defaults to "hdbscan".
         *args: any other positional arguments passed to `dynamo.pl.scatters`.
         **kwargs: any other keyword arguments passed to `dynamo.pl.scatters`.
 

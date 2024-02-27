@@ -16,86 +16,6 @@ from .utils import save_show_ret
 docstrings.delete_params("scatters.parameters", "aggregate", "kwargs", "save_kwargs")
 
 
-def create_edge_patch(posA, posB, width=1, node_rad=0, connectionstyle="arc3, rad=0.25", facecolor="k", **kwargs):
-    import matplotlib.patches as pat
-
-    style = "simple,head_length=%d,head_width=%d,tail_width=%d" % (
-        10,
-        10,
-        3 * width,
-    )
-    return pat.FancyArrowPatch(
-        posA=posA,
-        posB=posB,
-        arrowstyle=style,
-        connectionstyle=connectionstyle,
-        facecolor=facecolor,
-        shrinkA=node_rad,
-        shrinkB=node_rad,
-        **kwargs,
-    )
-
-
-def create_edge_patches_from_markov_chain(
-    P,
-    X,
-    width=3,
-    node_rad=0,
-    tol=1e-7,
-    connectionstyle="arc3, rad=0.25",
-    facecolor="k",
-    edgecolor="k",
-    alpha=0.8,
-    **kwargs
-):
-    """
-    create edge patches from a markov chain transition matrix. If P[i, j] > tol, an arrow is created from
-    node i to j.
-    """
-    arrows = []
-    for i in range(P.shape[0]):
-        for j in range(P.shape[0]):
-            if P[i, j] > tol:
-                if type(facecolor) == str:
-                    fc = facecolor
-                else:
-                    if type(facecolor) == pd.DataFrame:
-                        fc = facecolor.iloc[i, j]
-                    else:
-                        fc = facecolor[i, j]
-
-                if type(edgecolor) == str:
-                    ec = edgecolor
-                else:
-                    if type(edgecolor) == pd.DataFrame:
-                        ec = edgecolor.iloc[i, j]
-                    else:
-                        ec = edgecolor[i, j]
-
-                if type(alpha) == float:
-                    ac = alpha * min(2 * P[i, j], 1)
-                else:
-                    if type(alpha) == pd.DataFrame:
-                        ac = alpha.iloc[i, j]
-                    else:
-                        ac = alpha[i, j]
-
-                arrows.append(
-                    create_edge_patch(
-                        X[i],
-                        X[j],
-                        width=P[i, j] * width,
-                        node_rad=node_rad,
-                        connectionstyle=connectionstyle,
-                        facecolor=fc,
-                        edgecolor=ec,
-                        alpha=ac,
-                        **kwargs,
-                    )
-                )
-    return arrows
-
-
 @docstrings.with_indent(4)
 def state_graph(
     adata: AnnData,
@@ -323,3 +243,83 @@ def state_graph(
     plt.axis("off")
 
     return save_show_ret("state_graph", save_show_or_return, save_kwargs, (axes_list, color_list, font_color), adjust = show_legend)
+
+
+def create_edge_patch(posA, posB, width=1, node_rad=0, connectionstyle="arc3, rad=0.25", facecolor="k", **kwargs):
+    import matplotlib.patches as pat
+
+    style = "simple,head_length=%d,head_width=%d,tail_width=%d" % (
+        10,
+        10,
+        3 * width,
+    )
+    return pat.FancyArrowPatch(
+        posA=posA,
+        posB=posB,
+        arrowstyle=style,
+        connectionstyle=connectionstyle,
+        facecolor=facecolor,
+        shrinkA=node_rad,
+        shrinkB=node_rad,
+        **kwargs,
+    )
+
+
+def create_edge_patches_from_markov_chain(
+    P,
+    X,
+    width=3,
+    node_rad=0,
+    tol=1e-7,
+    connectionstyle="arc3, rad=0.25",
+    facecolor="k",
+    edgecolor="k",
+    alpha=0.8,
+    **kwargs
+):
+    """
+    create edge patches from a markov chain transition matrix. If P[i, j] > tol, an arrow is created from
+    node i to j.
+    """
+    arrows = []
+    for i in range(P.shape[0]):
+        for j in range(P.shape[0]):
+            if P[i, j] > tol:
+                if type(facecolor) == str:
+                    fc = facecolor
+                else:
+                    if type(facecolor) == pd.DataFrame:
+                        fc = facecolor.iloc[i, j]
+                    else:
+                        fc = facecolor[i, j]
+
+                if type(edgecolor) == str:
+                    ec = edgecolor
+                else:
+                    if type(edgecolor) == pd.DataFrame:
+                        ec = edgecolor.iloc[i, j]
+                    else:
+                        ec = edgecolor[i, j]
+
+                if type(alpha) == float:
+                    ac = alpha * min(2 * P[i, j], 1)
+                else:
+                    if type(alpha) == pd.DataFrame:
+                        ac = alpha.iloc[i, j]
+                    else:
+                        ac = alpha[i, j]
+
+                arrows.append(
+                    create_edge_patch(
+                        X[i],
+                        X[j],
+                        width=P[i, j] * width,
+                        node_rad=node_rad,
+                        connectionstyle=connectionstyle,
+                        facecolor=fc,
+                        edgecolor=ec,
+                        alpha=ac,
+                        **kwargs,
+                    )
+                )
+    return arrows

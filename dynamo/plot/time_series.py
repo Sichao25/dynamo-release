@@ -452,163 +452,6 @@ def kinetic_heatmap(
     return save_show_ret("kinetic_heatmap", save_show_or_return, save_kwargs, sns_heatmap, adjust = show_colorbar)
 
 
-def _half_max_ordering(exprs, time, mode, interpolate=False, spaced_num=100):
-    """Implement the half-max ordering algorithm from HA Pliner, Molecular Cell, 2018.
-
-    Parameters
-    ----------
-        exprs: `np.ndarray`
-            The gene expression matrix (ngenes x ncells) ordered along time (either pseudotime or inferred real time).
-        time: `np.ndarray`
-            Pseudotime or inferred real time.
-        mode: `str` (default: `vector_field`)
-            Which data mode will be used, either vector_field or pseudotime. if mode is vector_field, the trajectory
-            predicted by vector field function will be used, otherwise pseudotime trajectory (defined by time argument)
-            will be used.
-        interpolate: `bool` (default: `False`)
-            Whether to interpolate the data when performing the loess fitting.
-        spaced_num: `float` (default: `100`)
-            The number of points on the loess fitting curve.
-
-    Returns
-    -------
-        time: `np.ndarray`
-            The time at which the loess is evaluated.
-        all: `np.ndarray`
-            The ordered smoothed, scaled expression matrix, the first group is up, then down, followed by the transient
-            gene groups.
-        valid_ind: `np.ndarray`
-            The indices of valid genes that Loess smoothed.
-        gene_idx: `np.ndarray`
-            The indices of genes that are used for the half-max ordering plot.
-    """
-
-    if mode == "vector_field":
-        interpolate = False
-
-    gene_num = exprs.shape[0]
-    cell_num = spaced_num if interpolate else exprs.shape[1]
-    if interpolate:
-        hm_mat_scaled, hm_mat_scaled_z = (
-            np.zeros((gene_num, cell_num)),
-            np.zeros((gene_num, cell_num)),
-        )
-    else:
-        hm_mat_scaled, hm_mat_scaled_z = (
-            np.zeros_like(exprs),
-            np.zeros_like(exprs),
-        )
-
-    transient, trans_max, half_max = (
-        np.zeros(gene_num),
-        np.zeros(gene_num),
-        np.zeros(gene_num),
-    )
-
-    tmp = lowess_smoother(time, exprs, spaced_num) if interpolate else exprs
-
-    for i in range(gene_num):
-        hm_mat_scaled[i] = tmp[i] - np.min(tmp[i])
-        hm_mat_scaled[i] = hm_mat_scaled[i] / np.max(hm_mat_scaled[i])
-        scale_tmp = (tmp[i] - np.mean(tmp[i])) / np.std(tmp[i])  # scale in R
-        hm_mat_scaled_z[i] = scale_tmp
-
-        count, current = 0, hm_mat_scaled_z[i, 0] < 0  # check this
-        for j in range(cell_num):
-            if not (scale_tmp[j] < 0 == current):
-                count = count + 1
-                current = scale_tmp[j] < 0
-
-        half_max[i] = np.argmax(np.abs(scale_tmp - 0.5))
-        transient[i] = count
-        trans_max[i] = np.argsort(-scale_tmp)[0]
-
-    begin = np.arange(max([5, 0.05 * cell_num]))
-    end = np.arange(exprs.shape[1] - max([5, 0.05 * cell_num]), cell_num)
-    trans_indx = np.logical_and(
-        transient > 1,
-        not [i in np.concatenate((begin, end)) for i in trans_max],
-    )
-
-    trans_idx, trans, half_max_trans = (
-        np.where(trans_indx)[0],
-        hm_mat_scaled[trans_indx, :],
-        half_max[trans_indx],
-    )
-    nt_idx, nt = np.where(~trans_indx)[0], hm_mat_scaled[~trans_indx, :]
-    up_idx, up, half_max_up = (
-        np.where(nt[:, 0] < nt[:, -1])[0],
-        nt[nt[:, 0] < nt[:, -1], :],
-        half_max[nt[:, 0] < nt[:, -1]],
-    )
-    down_indx, down, half_max_down = (
-        np.where(nt[:, 0] >= nt[:, -1])[0],
-        nt[nt[:, 0] >= nt[:, -1], :],
-        half_max[nt[:, 0] >= nt[:, -1]],
-    )
-
-    trans, up, down = (
-        trans[np.argsort(half_max_trans), :],
-        up[np.argsort(half_max_up), :],
-        down[np.argsort(half_max_down), :],
-    )
-
-    all = np.vstack((up, down, trans))
-    gene_idx = np.hstack(
-        (
-            nt_idx[up_idx][np.argsort(half_max_up)],
-            nt_idx[down_indx][np.argsort(half_max_down)],
-            trans_idx,
-        )
-    )
-
-    return time, all, np.isfinite(nt[:, 0]) & np.isfinite(nt[:, -1]), gene_idx
-
-
-def lowess_smoother(time, exprs, spaced_num=None, n_convolve=30):
-    gene_num = exprs.shape[0]
-    if spaced_num is None:
-        res = exprs.copy()
-
-        if exprs.shape[1] < 300:
-            return res
-    else:
-        res = np.zeros((gene_num, spaced_num))
-
-    for i in range(gene_num):
-        x = exprs[i]
-
-        if spaced_num is None:
-            x_convolved = np.convolve(x[np.argsort(time)], np.ones(30) / 30, mode="same")
-            res[i, :] = x_convolved
-        else:
-            # lowess = sm.nonparametric.lowess
-            # tmp = lowess(x, time, frac=.3)
-            # # run scipy's interpolation.
-            # f = interp1d(tmp[:, 0], tmp[:, 1], bounds_error=False)
-
-            x_convolved = np.convolve(
-                x[np.argsort(time)],
-                np.ones(n_convolve) / n_convolve,
-                mode="same",
-            )
-
-            # check: is any difference between interpld and np.convolve?
-            if len(time) == len(x_convolved):
-                f = interp1d(time[np.argsort(time)], x_convolved, bounds_error=False)
-
-                time_linspace = np.linspace(np.min(time), np.max(time), spaced_num)
-                res[i, :] = f(time_linspace)
-            else:
-                res[i, :] = np.convolve(
-                    x[np.argsort(time)],
-                    np.ones(spaced_num) / spaced_num,
-                    mode="same",
-                )
-
-    return res
-
-
 @docstrings.with_indent(4)
 def jacobian_kinetics(
     adata: AnnData,
@@ -1001,3 +844,160 @@ def sensitivity_kinetics(
         sns_heatmap.cax.set_visible(False)
 
     return save_show_ret("sensitivity_kinetics", save_show_or_return, save_kwargs, sns_heatmap, adjust = show_colorbar)
+
+
+def lowess_smoother(time, exprs, spaced_num=None, n_convolve=30):
+    gene_num = exprs.shape[0]
+    if spaced_num is None:
+        res = exprs.copy()
+
+        if exprs.shape[1] < 300:
+            return res
+    else:
+        res = np.zeros((gene_num, spaced_num))
+
+    for i in range(gene_num):
+        x = exprs[i]
+
+        if spaced_num is None:
+            x_convolved = np.convolve(x[np.argsort(time)], np.ones(30) / 30, mode="same")
+            res[i, :] = x_convolved
+        else:
+            # lowess = sm.nonparametric.lowess
+            # tmp = lowess(x, time, frac=.3)
+            # # run scipy's interpolation.
+            # f = interp1d(tmp[:, 0], tmp[:, 1], bounds_error=False)
+
+            x_convolved = np.convolve(
+                x[np.argsort(time)],
+                np.ones(n_convolve) / n_convolve,
+                mode="same",
+            )
+
+            # check: is any difference between interpld and np.convolve?
+            if len(time) == len(x_convolved):
+                f = interp1d(time[np.argsort(time)], x_convolved, bounds_error=False)
+
+                time_linspace = np.linspace(np.min(time), np.max(time), spaced_num)
+                res[i, :] = f(time_linspace)
+            else:
+                res[i, :] = np.convolve(
+                    x[np.argsort(time)],
+                    np.ones(spaced_num) / spaced_num,
+                    mode="same",
+                )
+
+    return res
+
+
+def _half_max_ordering(exprs, time, mode, interpolate=False, spaced_num=100):
+    """Implement the half-max ordering algorithm from HA Pliner, Molecular Cell, 2018.
+
+    Parameters
+    ----------
+        exprs: `np.ndarray`
+            The gene expression matrix (ngenes x ncells) ordered along time (either pseudotime or inferred real time).
+        time: `np.ndarray`
+            Pseudotime or inferred real time.
+        mode: `str` (default: `vector_field`)
+            Which data mode will be used, either vector_field or pseudotime. if mode is vector_field, the trajectory
+            predicted by vector field function will be used, otherwise pseudotime trajectory (defined by time argument)
+            will be used.
+        interpolate: `bool` (default: `False`)
+            Whether to interpolate the data when performing the loess fitting.
+        spaced_num: `float` (default: `100`)
+            The number of points on the loess fitting curve.
+
+    Returns
+    -------
+        time: `np.ndarray`
+            The time at which the loess is evaluated.
+        all: `np.ndarray`
+            The ordered smoothed, scaled expression matrix, the first group is up, then down, followed by the transient
+            gene groups.
+        valid_ind: `np.ndarray`
+            The indices of valid genes that Loess smoothed.
+        gene_idx: `np.ndarray`
+            The indices of genes that are used for the half-max ordering plot.
+    """
+
+    if mode == "vector_field":
+        interpolate = False
+
+    gene_num = exprs.shape[0]
+    cell_num = spaced_num if interpolate else exprs.shape[1]
+    if interpolate:
+        hm_mat_scaled, hm_mat_scaled_z = (
+            np.zeros((gene_num, cell_num)),
+            np.zeros((gene_num, cell_num)),
+        )
+    else:
+        hm_mat_scaled, hm_mat_scaled_z = (
+            np.zeros_like(exprs),
+            np.zeros_like(exprs),
+        )
+
+    transient, trans_max, half_max = (
+        np.zeros(gene_num),
+        np.zeros(gene_num),
+        np.zeros(gene_num),
+    )
+
+    tmp = lowess_smoother(time, exprs, spaced_num) if interpolate else exprs
+
+    for i in range(gene_num):
+        hm_mat_scaled[i] = tmp[i] - np.min(tmp[i])
+        hm_mat_scaled[i] = hm_mat_scaled[i] / np.max(hm_mat_scaled[i])
+        scale_tmp = (tmp[i] - np.mean(tmp[i])) / np.std(tmp[i])  # scale in R
+        hm_mat_scaled_z[i] = scale_tmp
+
+        count, current = 0, hm_mat_scaled_z[i, 0] < 0  # check this
+        for j in range(cell_num):
+            if not (scale_tmp[j] < 0 == current):
+                count = count + 1
+                current = scale_tmp[j] < 0
+
+        half_max[i] = np.argmax(np.abs(scale_tmp - 0.5))
+        transient[i] = count
+        trans_max[i] = np.argsort(-scale_tmp)[0]
+
+    begin = np.arange(max([5, 0.05 * cell_num]))
+    end = np.arange(exprs.shape[1] - max([5, 0.05 * cell_num]), cell_num)
+    trans_indx = np.logical_and(
+        transient > 1,
+        not [i in np.concatenate((begin, end)) for i in trans_max],
+    )
+
+    trans_idx, trans, half_max_trans = (
+        np.where(trans_indx)[0],
+        hm_mat_scaled[trans_indx, :],
+        half_max[trans_indx],
+    )
+    nt_idx, nt = np.where(~trans_indx)[0], hm_mat_scaled[~trans_indx, :]
+    up_idx, up, half_max_up = (
+        np.where(nt[:, 0] < nt[:, -1])[0],
+        nt[nt[:, 0] < nt[:, -1], :],
+        half_max[nt[:, 0] < nt[:, -1]],
+    )
+    down_indx, down, half_max_down = (
+        np.where(nt[:, 0] >= nt[:, -1])[0],
+        nt[nt[:, 0] >= nt[:, -1], :],
+        half_max[nt[:, 0] >= nt[:, -1]],
+    )
+
+    trans, up, down = (
+        trans[np.argsort(half_max_trans), :],
+        up[np.argsort(half_max_up), :],
+        down[np.argsort(half_max_down), :],
+    )
+
+    all = np.vstack((up, down, trans))
+    gene_idx = np.hstack(
+        (
+            nt_idx[up_idx][np.argsort(half_max_up)],
+            nt_idx[down_indx][np.argsort(half_max_down)],
+            trans_idx,
+        )
+    )
+
+    return time, all, np.isfinite(nt[:, 0]) & np.isfinite(nt[:, -1]), gene_idx

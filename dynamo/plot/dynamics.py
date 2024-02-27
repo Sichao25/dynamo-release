@@ -7,20 +7,30 @@ try:
 except ImportError:
     from typing_extensions import Literal
 
+import numpy as np
 import pandas as pd
 from anndata import AnnData
 from matplotlib.figure import Figure
+from matplotlib.lines import Line2D
+from scipy.sparse import issparse
 
 from ..configuration import _themes
 from ..dynamo_logger import main_warning
 from ..estimation.csc.velocity import sol_s, sol_u, solve_first_order_deg
 from ..estimation.tsc.utils_moments import moments
+from ..tools.moments import (
+    prepare_data_has_splicing,
+    prepare_data_mix_has_splicing,
+    prepare_data_mix_no_splicing,
+    prepare_data_no_splicing,
+)
 from ..tools.utils import get_mapper, get_valid_bools, get_vel_params, index_gene, log1p_, update_dict, update_vel_params
 from .scatters import scatters
 from .utils import (
     _datashade_points,
     _matplotlib_points,
     _select_font_color,
+    _to_hex,
     arrowed_spines,
     deaxis_all,
     default_quiver_args,
@@ -29,1045 +39,6 @@ from .utils import (
     quiver_autoscaler,
     save_show_ret,
 )
-from .utils_dynamics import *
-
-
-def phase_portraits(
-    adata: AnnData,
-    genes: List[str],
-    x: int = 0,
-    y: int = 1,
-    pointsize: Optional[float] = None,
-    vkey: Optional[str] = None,
-    ekey: Optional[str] = None,
-    basis: str = "umap",
-    log1p: bool = True,
-    color: str = "cell_cycle_phase",
-    use_smoothed: bool = True,
-    highlights: Optional[list] = None,
-    discrete_continous_div_themes: Optional[list] = None,
-    discrete_continous_div_cmap: Optional[list] = None,
-    discrete_continous_div_color_key: list = [None, None, None],
-    discrete_continous_div_color_key_cmap: Optional[list] = None,
-    figsize: Tuple[float, float] = (6, 4),
-    ncols: Optional[int] = None,
-    legend: str = "upper left",
-    background: Optional[str] = None,
-    show_quiver: bool = False,
-    quiver_size: Optional[float] = None,
-    quiver_length: Optional[float] = None,
-    no_vel_u: bool = True,
-    frontier: bool = True,
-    q_kwargs_dict: dict = {},
-    show_arrowed_spines: Optional[bool] = None,
-    save_show_or_return: Literal["save", "show", "return"] = "show",
-    save_kwargs: dict = {},
-    **kwargs,
-) -> Optional[Figure]:
-    """Draw the phase portrait, expression values, velocity on the low dimensional embedding.
-
-    Note that this function allows to manually set the theme, cmap, color_key and color_key_cmap for the phase portrait,
-    expression and velocity subplots. When the background is 'black', the default themes for each of those subplots are
-    ["glasbey_dark", "inferno", "div_blue_black_red"], respectively. When the background is 'black', the default themes
-    are "glasbey_white", "viridis", "div_blue_red".
-
-    Args:
-        adata: an AnnData object.
-        genes: a list of gene names that are going to be visualized.
-        x: the column index of the low dimensional embedding for the x-axis. Defaults to 0.
-        y: the column index of the low dimensional embedding for the y-axis. Defaults to 1.
-        pointsize: the scale of the point size. Actual point cell size is calculated as
-            `2500.0 / np.sqrt(adata.shape[0]) * pointsize`. Defaults to None.
-        vkey: the velocity key used for visualizing the magnitude of velocity. Can be either velocity in the layers slot
-            or the keys in the obsm slot. Defaults to None.
-        ekey: the layer of data to represent the gene expression level. Defaults to None.
-        basis: the key of the low dimensional embedding will be used to visualize the cell. Defaults to "umap".
-        log1p: whether to log1p transform the expression so that visualization can be robust to extreme values. Defaults
-            to True.
-        color: the group to be used to color cells. It would only be used for the phase portrait because the other two
-            plots are colored by the velocity magnitude or the gene expression value respectively. Defaults to
-            "cell_cycle_phase".
-        use_smoothed: Whether to use smoothed 1/2-nd moments as gene expression for the first and third columns. This is
-            useful for checking the confidence of transition genes. For example, you may see a very nice linear pattern
-            for some genes with the smoothed expression but this could just be an artificially generated when the number
-            of expressed cells is very low. This raises red flags for the quality of the velocity values we learned for
-            those genes. And we recommend to set the higher values (for example, 10% of all cells) for `min_cell_s`,
-            `min_cell_u` or `shared_count` of the `fg_kwargs` argument of the dyn.pl.receipe_monocle. Note that this is
-            often related to the small single cell datasets (like plate-based scRNA-seq or scSLAM-seq/NASC-seq, etc).
-            Defaults to True.
-        highlights: the color group to be highlighted. If highligts is a list of lists, each list is relate to each
-            color element. Defaults to None.
-        discrete_continous_div_themes: the discrete, continous and divergent color themes to use for plotting,
-            respectively. The description for each element in the list is as following. A small set of predefined themes
-            are provided which have relatively good aesthetics. Available themes are:
-               * 'blue'
-               * 'red'
-               * 'green'
-               * 'inferno'
-               * 'fire'
-               * 'viridis'
-               * 'darkblue'
-               * 'darkred'
-               * 'darkgreen'.
-            Defaults to None.
-        discrete_continous_div_cmap: the names of discrete, continous and divergent matplotlib colormap to use for
-            coloring or shading points. The description for each element in the list is as following. If no labels or
-            values are passed this will be used for shading points according to density (largely only of relevance for
-            very large datasets). If values are passed this will be used for shading according the value. Note that if
-            theme is passed then this value will be overridden by the corresponding option of the theme. Defaults to
-            None.
-        discrete_continous_div_color_key: A list to assign discrete, continous and divergent colors to categoricals.
-            This can either be an explicit dict mapping labels to colors (as strings of form '#RRGGBB'), or an array
-            like object providing one color for each distinct category being provided in `labels`. Either way this
-            mapping will be used to color points according to the label. Note that if theme is passed then this value
-            will be overridden by the corresponding option of the theme. Defaults to [None, None, None].
-        discrete_continous_div_color_key_cmap: the names of discrete, continous and divergent matplotlib colormap to use
-            for categorical coloring. If an explicit `color_key` is not given a color mapping for categories can be
-            generated from the label list and selecting a matching list of colors from the given colormap. Note that if
-            theme is passed then this value will be overridden by the corresponding option of the theme. Defaults to
-            None.
-        figsize: the width and height of each panel in the figure. Defaults to (6, 4).
-        ncols: number of columns in each facet grid. Defaults to None.
-        legend: the position to draw the legend. Legend is drawn by seaborn with “brief” mode, numeric hue and size v
-            ariables will be represented with a sample of evenly spaced values. By default, legend is drawn on top of
-            cells. Defaults to "upper left".
-        background: the background color. If set to None the face color of the figure would be used. Defaults to None.
-        show_quiver: Whether to show the quiver plot. If velocity for x component (corresponds to either spliced, total
-            RNA, protein, etc.) or y component (corresponds to either unspliced, new RNA, protein, etc.) are both
-            calculated, quiver represents velocity for both components otherwise the uncalculated component (usually y
-            component) will be set to be 0. Defaults to False.
-        quiver_size: the size of quiver. If None, we will use set quiver_size to be 1. Note that quiver quiver_size is
-            used to calculate the head_width (10 x quiver_size), head_length (12 x quiver_size) and headaxislength (8 x
-            quiver_size) of the quiver. This is done via the `default_quiver_args` function which also calculate the
-            scale of the quiver (1 / quiver_length). Defaults to None.
-        quiver_length: the length of quiver. The quiver length which will be used to calculate scale of quiver. Note
-            that before applying `default_quiver_args` velocity values are first rescaled via the quiver_autoscaler
-            function. Scale of quiver indicates the number of data units per arrow length unit, e.g., m/s per plot
-            width; a smaller scale parameter makes the arrow longer. Defaults to None.
-        no_vel_u: whether to not show velocity U (velocity of unspliced RNAs). Defaults to True.
-        frontier: whether to add the frontier. Scatter plots can be enhanced by using transparency (alpha) in order to
-            show area of high density and multiple scatter plots can be used to delineate a frontier. See matplotlib
-            tips & tricks cheatsheet (https://github.com/matplotlib/cheatsheets). Originally inspired by figures from
-            scEU-seq paper: https://science.sciencemag.org/content/367/6482/1151. Defaults to True.
-        q_kwargs_dict: the dictionary of the quiver arguments. The default setting of quiver argument is identical to
-            that used in the cell_wise_velocity and grid_velocity. Defaults to {}.
-        show_arrowed_spines: whether to show a pair of arrowed spines represeenting the basis of the scatter is
-            currently using. If None, only the first panel in the expression / velocity plot will have the arrowed
-            spine. Defaults to None.
-        save_show_or_return: whether to save, show or return the figure. Defaults to "show".
-        save_kwargs: a dictionary that will be passed to the save_show_ret function. By default, it is an empty dictionary
-            and the save_show_ret function will use the
-                {
-                    "path": None,
-                    "prefix": 'phase_portraits',
-                    "dpi": None,
-                    "ext": 'pdf',
-                    "transparent": True,
-                    "close": True,
-                    "verbose": True
-                }
-            as its parameters. Otherwise, you can provide a dictionary that properly modify those keys according to
-            your needs. Defaults to {}.
-        **kwargs: additional parameters that will be passed to `plt.scatter` function.
-
-    Raises:
-        ValueError: missing velocity data in the AnnData object.
-        ValueError: cannot find layer with given `v_key`.
-        ValueError: missing velocity_gamma column in the AnnData object.
-        ValueError: missing velocity_gamma column in the AnnData object.
-        ValueError: corrupted AnnData object missing basic labeled/unlabeled or spliced/unspliced data.
-        NotImplementedError: invalid `save_show_or_return`.
-
-    Returns:
-        None would be returned in default and the plotted figure would be shown directly. The matplotlib plot would show
-        1) the phase portrait of each category used in velocity embedding, cells' low dimensional embedding, colored
-        either by 2) the gene expression level or 3) the velocity magnitude values. If set
-        `save_show_or_return='return'` as a kwarg, the axes of the plot would be returned.
-    """
-
-    import matplotlib.pyplot as plt
-    from matplotlib import rcParams
-    from matplotlib.colors import to_hex
-
-    # from matplotlib.colors import DivergingNorm  # TwoSlopeNorm
-
-    has_labeling, has_splicing, splicing_labeling = (
-        adata.uns["dynamics"]["has_labeling"],
-        adata.uns["dynamics"]["has_splicing"],
-        adata.uns["dynamics"]["splicing_labeling"],
-    )
-    if background is None:
-        _background = rcParams.get("figure.facecolor")
-        _background = to_hex(_background) if type(_background) is tuple else _background
-    else:
-        _background = background
-
-    mapper = get_mapper(smoothed=use_smoothed)
-
-    point_size = (
-        500.0 / np.sqrt(adata.shape[0]) * 5 if pointsize is None else 500.0 / np.sqrt(adata.shape[0]) * 5 * pointsize
-    )
-    scatter_kwargs = dict(alpha=0.2, s=point_size, edgecolor=None, linewidth=0)  # (0, 0, 0, 1)
-
-    if kwargs is not None:
-        scatter_kwargs.update(kwargs)
-    div_scatter_kwargs = scatter_kwargs.copy()
-    # div_scatter_kwargs.update({"norm": DivergingNorm(vcenter=0)})
-
-    if type(genes) == str:
-        genes = [genes]
-    _genes = list(set(adata.var.index).intersection(genes))
-
-    # avoid object for dtype in the gamma column https://stackoverflow.com/questions/40809503/python-numpy-typeerror-ufunc-isfinite-not-supported-for-the-input-types
-    if adata.uns["dynamics"]["experiment_type"] in [
-        "one-shot",
-        "kin",
-        "deg",
-        "mix_kin_deg",
-        "mix_pulse_chase",
-    ]:
-        k_name = "gamma_k"
-    else:
-        k_name = "gamma"
-
-    vel_params_df = get_vel_params(adata)
-    valid_id = np.isfinite(np.array(vel_params_df.loc[_genes, k_name], dtype="float")).flatten()
-    genes = np.array(_genes)[valid_id].tolist()
-    # idx = [adata.var.index.to_list().index(i) for i in genes]
-
-    if len(genes) == 0:
-        raise ValueError(
-            "adata has no genes listed in your input gene vector or "
-            "velocity estimation for those genes are not performed. "
-            "Please try to run dyn.tl.dynamics(adata, filter_gene_mode='no')"
-            "to estimate velocity for all genes: {}".format(_genes)
-        )
-
-    if not "X_" + basis in adata.obsm.keys():
-        main_warning("{} is not applied to adata.".format(basis))
-        from ..tools.dimension_reduction import reduceDimension
-
-        reduceDimension(adata, reduction_method=basis)
-
-    embedding = pd.DataFrame(
-        {
-            basis + "_0": adata.obsm["X_" + basis][:, x],
-            basis + "_1": adata.obsm["X_" + basis][:, y],
-        }
-    )
-    embedding.columns = ["dim_1", "dim_2"]
-
-    if has_labeling and not has_splicing:
-        mode = "labeling"
-        vkey = "T" if vkey is None else vkey
-        ekey = "M_t" if ekey is None else ekey
-    elif has_splicing and not has_labeling:
-        mode = "splicing"
-        vkey = "S" if vkey is None else vkey
-        ekey = "M_s" if ekey is None else ekey
-    elif splicing_labeling:
-        mode = "full"
-        vkey = "S" if vkey is None else vkey
-        ekey = "M_s" if ekey is None else ekey
-    elif has_splicing and has_labeling:
-        mode = "full"
-        vkey = "S" if vkey is None else vkey
-        ekey = "M_s" if ekey is None else ekey
-
-    layers = list(adata.layers.keys())
-    layers.extend(["X", "protein", "X_protein"])
-    if ekey in layers:
-        if ekey == "X":
-            E_vec = (
-                index_gene(adata, adata.layers[mapper["X"]], genes)
-                if mapper["X"] in adata.layers.keys()
-                else index_gene(adata, adata.X, genes)
-            )
-        elif ekey in ["protein", "X_protein"]:
-            E_vec = (
-                index_gene(adata, adata.layers[mapper[ekey]], genes)
-                if (ekey in mapper.keys()) and (mapper[ekey] in adata.obsm_keys())
-                else index_gene(adata, adata.obsm[ekey], genes)
-            )
-        else:
-            E_vec = (
-                index_gene(adata, adata.layers[mapper[ekey]], genes)
-                if (ekey in mapper.keys()) and (mapper[ekey] in adata.layers.keys())
-                else index_gene(adata, adata.layers[ekey], genes)
-            )
-
-        if log1p:
-            E_vec = log1p_(adata, E_vec)
-
-    n_cells, n_genes = adata.shape[0], len(genes)
-
-    color_vec = np.repeat(np.nan, n_cells)
-    if color is not None:
-        color_vec = adata.obs[color].to_list()
-
-    if "velocity_" not in vkey:
-        vkey = "velocity_" + vkey
-    if vkey == "velocity_U":
-        V_vec = index_gene(adata, adata.layers["velocity_U"], genes)
-        if "velocity_P" in adata.obsm.keys():
-            P_vec = index_gene(adata, adata.layers["velocity_P"], genes)
-    elif vkey == "velocity_S":
-        V_vec = index_gene(adata, adata.layers["velocity_S"], genes)
-        if "velocity_P" in adata.obsm.keys():
-            P_vec = index_gene(adata, adata.layers["velocity_P"], genes)
-    elif vkey == "velocity_T":
-        V_vec = index_gene(adata, adata.layers["velocity_T"], genes)
-        if "velocity_P" in adata.obsm.keys():
-            P_vec = index_gene(adata, adata.layers["velocity_P"], genes)
-    elif vkey == "velocity_N":
-        V_vec = index_gene(adata, adata.layers["velocity_N"], genes)
-        if "velocity_P" in adata.obsm.keys():
-            P_vec = index_gene(adata, adata.layers["velocity_P"], genes)
-    else:
-        if vkey in adata.layers.keys():
-            V_vec = index_gene(adata, adata.layers[vkey], genes)
-            if "velocity_P" in adata.obsm.keys():
-                P_vec = index_gene(adata, adata.layers["velocity_P"], genes)
-        else:
-            raise ValueError("adata has no vkey {} in either the layers or the obsm slot".format(vkey))
-
-    E_vec, V_vec = (
-        E_vec.A if issparse(E_vec) else E_vec,
-        V_vec.A if issparse(V_vec) else V_vec,
-    )
-
-    if k_name in vel_params_df.columns:
-        if not ("gamma_b" in vel_params_df.columns) or all(vel_params_df.gamma_b.isna()):
-            vel_params_df.loc[:, "gamma_b"] = 0
-        gamma, velocity_offset = (
-            index_gene(adata, vel_params_df.loc[:, k_name].values, genes),
-            index_gene(adata, vel_params_df.gamma_b.values, genes),
-        )
-        (
-            gamma[~np.isfinite(list(gamma))],
-            velocity_offset[~np.isfinite(list(velocity_offset))],
-        ) = (0, 0)
-    else:
-        raise ValueError(
-            "adata does not seem to have velocity_gamma column. Velocity estimation is required before "
-            "running this function."
-        )
-
-    if mode == "labeling":
-        new_mat, tot_mat = (
-            index_gene(adata, adata.layers[mapper["X_new"]], genes),
-            index_gene(adata, adata.layers[mapper["X_total"]], genes),
-        )
-
-        new_mat, tot_mat = (new_mat.A, tot_mat.A) if issparse(new_mat) else (new_mat, tot_mat)
-
-        vel_u, vel_s = (
-            index_gene(adata, adata.layers["velocity_N"].A, genes),
-            index_gene(adata, adata.layers["velocity_T"].A, genes),
-        )
-
-        df = pd.DataFrame(
-            {
-                "new": new_mat.flatten(),
-                "total": tot_mat.flatten(),
-                "gene": genes * n_cells,
-                "gamma": np.tile(gamma, n_cells),
-                "velocity_offset": np.tile(velocity_offset, n_cells),
-                "expression": E_vec.flatten(),
-                "velocity": V_vec.flatten(),
-                "color": np.repeat(color_vec, n_genes),
-                "vel_u": vel_u.flatten(),
-                "vel_s": vel_s.flatten(),
-            },
-            index=range(n_cells * n_genes),
-        )
-
-    elif mode == "splicing":
-        unspliced_mat, spliced_mat = (
-            index_gene(adata, adata.layers[mapper["X_unspliced"]], genes),
-            index_gene(adata, adata.layers[mapper["X_spliced"]], genes),
-        )
-
-        unspliced_mat, spliced_mat = (
-            (unspliced_mat.A, spliced_mat.A) if issparse(unspliced_mat) else (unspliced_mat, spliced_mat)
-        )
-
-        vel_u, vel_s = (
-            np.zeros_like(index_gene(adata, adata.layers["velocity_S"].A, genes)),
-            index_gene(adata, adata.layers["velocity_S"].A, genes),
-        )
-
-        df = pd.DataFrame(
-            {
-                "U": unspliced_mat.flatten(),
-                "S": spliced_mat.flatten(),
-                "gene": genes * n_cells,
-                "gamma": np.tile(gamma, n_cells),
-                "velocity_offset": np.tile(velocity_offset, n_cells),
-                "expression": E_vec.flatten(),
-                "velocity": V_vec.flatten(),
-                "color": np.repeat(color_vec, n_genes),
-                "vel_u": vel_u.flatten(),
-                "vel_s": vel_s.flatten(),
-            },
-            index=range(n_cells * n_genes),
-        )
-
-    elif mode == "full":
-        U, S, N, T = (
-            index_gene(adata, adata.layers[mapper["X_unspliced"]], genes),
-            index_gene(adata, adata.layers[mapper["X_spliced"]], genes),
-            index_gene(adata, adata.layers[mapper["X_new"]], genes),
-            index_gene(adata, adata.layers[mapper["X_total"]], genes),
-        )
-        U, S, N, T = (U.A, S.A, N.A, T.A) if issparse(U) else (U, S, N, T)
-
-        vel_u, vel_s = (
-            (
-                index_gene(adata, adata.layers["velocity_U"].A, genes) if "velocity_U" in adata.layers.keys() else None,
-                index_gene(adata, adata.layers["velocity_S"].A, genes),
-            )
-            if vkey == "velocity_S"
-            else (
-                index_gene(adata, adata.layers["velocity_N"].A, genes) if "velocity_U" in adata.layers.keys() else None,
-                index_gene(adata, adata.layers["velocity_T"].A, genes),
-            )
-        )
-        if "protein" in adata.obsm.keys():
-            if "delta" in vel_params_df.columns:
-                gamma_P = vel_params_df.delta[genes].values
-                velocity_offset_P = (
-                    [0] * n_cells
-                    if (not ("delta_b" in vel_params_df.columns) or vel_params_df.delta_b.unique() is None)
-                    else vel_params_df.delta_b[genes].values
-                )
-            else:
-                raise ValueError(
-                    "adata does not seem to have velocity_gamma column. Velocity estimation is required before "
-                    "running this function."
-                )
-
-            P = (
-                index_gene(adata, adata.obsm[mapper["X_protein"]], genes)
-                if (["X_protein"] in adata.obsm.keys() or [mapper["X_protein"]] in adata.obsm.keys())
-                else index_gene(adata, adata.obsm["protein"], genes)
-            )
-            P = P.A if issparse(P) else P
-            if issparse(P_vec):
-                P_vec = P_vec.A
-
-            vel_p = np.zeros_like(adata.obsm["velocity_P"][:, :])
-
-            # df = pd.DataFrame({"uu": uu.flatten(), "ul": ul.flatten(), "su": su.flatten(), "sl": sl.flatten(), "P": P.flatten(),
-            #                    'gene': genes * n_cells, 'prediction': np.tile(gamma, n_cells) * uu.flatten() +
-            #                     np.tile(velocity_offset, n_cells), "velocity": genes * n_cells}, index=range(n_cells * n_genes))
-            df = pd.DataFrame(
-                {
-                    "new": N.flatten(),
-                    "total": T.flatten(),
-                    "S": S.flatten(),
-                    "U": U.flatten(),
-                    "P": P.flatten(),
-                    "gene": genes * n_cells,
-                    "gamma": np.tile(gamma, n_cells),
-                    "velocity_offset": np.tile(velocity_offset, n_cells),
-                    "gamma_P": np.tile(gamma_P, n_cells),
-                    "velocity_offset_P": np.tile(velocity_offset_P, n_cells),
-                    "expression": E_vec.flatten(),
-                    "velocity": V_vec.flatten(),
-                    "velocity_protein": P_vec.flatten(),
-                    "color": np.repeat(color_vec, n_genes),
-                    "vel_u": vel_u.flatten() if vel_u is not None else None,
-                    "vel_s": vel_s.flatten(),
-                    "vel_p": vel_p.flatten(),
-                },
-                index=range(n_cells * n_genes),
-            )
-        else:
-            df = pd.DataFrame(
-                {
-                    "new": N.flatten(),
-                    "total": T.flatten(),
-                    "S": S.flatten(),
-                    "U": U.flatten(),
-                    "gene": genes * n_cells,
-                    "gamma": np.tile(gamma, n_cells),
-                    "velocity_offset": np.tile(velocity_offset, n_cells),
-                    "expression": E_vec.flatten(),
-                    "velocity": V_vec.flatten(),
-                    "color": np.repeat(color_vec, n_genes),
-                    "vel_u": vel_u.flatten(),
-                    "vel_s": vel_s.flatten(),
-                },
-                index=range(n_cells * n_genes),
-            )
-    else:
-        raise ValueError(
-            "Your adata is corrupted. Make sure that your layer has keys new, old for the labelling mode, "
-            "spliced, ambiguous, unspliced for the splicing model and uu, ul, su, sl for the full mode"
-        )
-
-    num_per_gene = 6 if ("protein" in adata.obsm.keys() and mode == "full") else 3
-    ncols = min([num_per_gene, ncols]) if ncols is not None else num_per_gene
-    nrow, ncol = int(np.ceil(num_per_gene * n_genes / ncols)), ncols
-    if figsize is None:
-        g = plt.figure(None, (3 * ncol, 3 * nrow), facecolor=_background)  # , dpi=160
-    else:
-        g = plt.figure(None, (figsize[0] * ncol, figsize[1] * nrow), facecolor=_background)  # , dpi=160
-
-    if discrete_continous_div_themes is None:
-        if _background in ["#ffffff", "black"]:
-            discrete_theme, continous_theme, divergent_theme = (
-                "glasbey_dark",
-                "inferno",
-                "div_blue_black_red",
-            )
-        else:
-            discrete_theme, continous_theme, divergent_theme = (
-                "glasbey_white",
-                "viridis",
-                "div_blue_red",
-            )
-    else:
-        (
-            discrete_theme,
-            continous_theme,
-            divergent_theme,
-        ) = discrete_continous_div_themes
-
-    discrete_cmap, discrete_color_key_cmap, discrete_background = (
-        _themes[discrete_theme]["cmap"] if discrete_continous_div_cmap is None else discrete_continous_div_cmap[0],
-        _themes[discrete_theme]["color_key_cmap"]
-        if discrete_continous_div_color_key_cmap is None
-        else discrete_continous_div_color_key_cmap[0],
-        _themes[discrete_theme]["background"],
-    )
-    continous_cmap, continous_color_key_cmap, continous_background = (
-        _themes[continous_theme]["cmap"] if discrete_continous_div_cmap is None else discrete_continous_div_cmap[1],
-        _themes[continous_theme]["color_key_cmap"]
-        if discrete_continous_div_color_key_cmap is None
-        else discrete_continous_div_color_key_cmap[1],
-        _themes[continous_theme]["background"],
-    )
-    divergent_cmap, divergent_color_key_cmap, divergent_background = (
-        _themes[divergent_theme]["cmap"] if discrete_continous_div_cmap is None else discrete_continous_div_cmap[2],
-        _themes[divergent_theme]["color_key_cmap"]
-        if discrete_continous_div_color_key_cmap is None
-        else discrete_continous_div_color_key_cmap[2],
-        _themes[divergent_theme]["background"],
-    )
-
-    font_color = _select_font_color(discrete_background)
-
-    # the following code is inspired by https://github.com/velocyto-team/velocyto-notebooks/blob/master/python/DentateGyrus.ipynb
-    gs = plt.GridSpec(nrow, ncol, wspace=0.5, hspace=0.36)
-    for i, gn in enumerate(genes):
-        if num_per_gene == 3:
-            ax1, ax2, ax3 = (
-                plt.subplot(gs[i * 3]),
-                plt.subplot(gs[i * 3 + 1]),
-                plt.subplot(gs[i * 3 + 2]),
-            )
-        elif num_per_gene == 6:
-            ax1, ax2, ax3, ax4, ax5, ax6 = (
-                plt.subplot(gs[i * 3]),
-                plt.subplot(gs[i * 3 + 1]),
-                plt.subplot(gs[i * 3 + 2]),
-                plt.subplot(gs[i * 3 + 3]),
-                plt.subplot(gs[i * 3 + 4]),
-                plt.subplot(gs[i * 3 + 5]),
-            )
-        try:
-            ix = np.where(adata.var.index == gn)[0][0]
-        except:
-            continue
-        cur_pd = df.loc[df.gene == gn, :]
-        if cur_pd.color.isna().all():
-            if cur_pd.shape[0] <= figsize[0] * figsize[1] * 1000000:
-                ax1, color = _matplotlib_points(
-                    cur_pd.loc[:, ["S", "U"]].values
-                    if vkey == "velocity_S"
-                    else cur_pd.loc[:, ["total", "new"]].values,
-                    ax=ax1,
-                    labels=None,
-                    values=cur_pd.loc[:, "expression"].values,
-                    highlights=highlights,
-                    cmap=continous_cmap,
-                    color_key=discrete_continous_div_color_key[1],
-                    color_key_cmap=continous_color_key_cmap,
-                    background=continous_background,
-                    width=figsize[0],
-                    height=figsize[1],
-                    show_legend=legend,
-                    **scatter_kwargs,
-                )
-            else:
-                ax1, color = _datashade_points(
-                    cur_pd.loc[:, ["S", "U"]].values
-                    if vkey == "velocity_S"
-                    else cur_pd.loc[:, ["total", "new"]].values,
-                    ax=ax1,
-                    labels=None,
-                    values=cur_pd.loc[:, "expression"].values,
-                    highlights=highlights,
-                    cmap=continous_cmap,
-                    color_key=discrete_continous_div_color_key[1],
-                    color_key_cmap=continous_color_key_cmap,
-                    background=continous_background,
-                    width=figsize[0],
-                    height=figsize[1],
-                    show_legend=legend,
-                    **scatter_kwargs,
-                )
-        else:
-            if cur_pd.shape[0] <= figsize[0] * figsize[1] * 1000000:
-                ax1, color = _matplotlib_points(
-                    cur_pd.loc[:, ["S", "U"]].values
-                    if vkey == "velocity_S"
-                    else cur_pd.loc[:, ["total", "new"]].values,
-                    ax=ax1,
-                    labels=cur_pd.loc[:, "color"],
-                    values=None,
-                    highlights=highlights,
-                    cmap=discrete_cmap,
-                    color_key=discrete_continous_div_color_key[0],
-                    color_key_cmap=discrete_color_key_cmap,
-                    background=discrete_background,
-                    width=figsize[0],
-                    height=figsize[1],
-                    show_legend=legend,
-                    **scatter_kwargs,
-                )
-            else:
-                ax1, color = _datashade_points(
-                    cur_pd.loc[:, ["S", "U"]].values
-                    if vkey == "velocity_S"
-                    else cur_pd.loc[:, ["total", "new"]].values,
-                    ax=ax1,
-                    labels=cur_pd.loc[:, "color"],
-                    values=None,
-                    highlights=highlights,
-                    cmap=discrete_cmap,
-                    color_key=discrete_continous_div_color_key[0],
-                    color_key_cmap=discrete_color_key_cmap,
-                    background=discrete_background,
-                    width=figsize[0],
-                    height=figsize[1],
-                    show_legend=legend,
-                    **scatter_kwargs,
-                )
-
-        ax1.set_title(gn)
-        if vkey == "velocity_S":
-            ax1.set_xlabel("spliced (1st moment)")
-            ax1.set_ylabel("unspliced (1st moment)")
-        elif vkey == "velocity_T":
-            ax1.set_xlabel("total (1st moment)")
-            ax1.set_ylabel("new (1st moment)")
-
-        # only linear regression fitting of extreme cells will be plotted together with U-S phase plane.
-        if vkey in ["velocity_S", "velocity_T"]:
-            xnew = (
-                np.linspace(cur_pd.loc[:, "S"].min(), cur_pd.loc[:, "S"].max() * 0.80)
-                if vkey == "velocity_S"
-                else np.linspace(
-                    cur_pd.loc[:, "total"].min(),
-                    cur_pd.loc[:, "total"].max() * 0.80,
-                )
-            )
-            ax1.plot(
-                xnew,
-                xnew * cur_pd.loc[:, "gamma"].unique() + cur_pd.loc[:, "velocity_offset"].unique(),
-                dashes=[6, 2],
-                c=font_color,
-            )
-
-        X_array, V_array = (
-            cur_pd.loc[:, ["S", "U"]].values if vkey == "velocity_S" else cur_pd.loc[:, ["total", "new"]].values,
-            cur_pd.loc[:, ["vel_s", "vel_u"]].values,
-        )
-        if no_vel_u and vkey == "velocity_S":
-            V_array[:, 1] = 0
-        # add quiver:
-        if show_quiver:
-            V_array /= 3 * quiver_autoscaler(X_array, V_array)
-
-            if background is None:
-                background = rcParams.get("figure.facecolor")
-            if quiver_size is None:
-                quiver_size = 1
-            if background == "black":
-                edgecolors = "white"
-            else:
-                edgecolors = "black"
-
-            head_w, head_l, ax_l, scale = default_quiver_args(quiver_size, quiver_length)
-
-            quiver_kwargs = {
-                "angles": "xy",
-                "scale": scale,
-                "scale_units": "xy",
-                "width": 0.0005,
-                "headwidth": head_w,
-                "headlength": head_l,
-                "headaxislength": ax_l,
-                "minshaft": 1,
-                "minlength": 1,
-                "pivot": "tail",
-                "edgecolors": edgecolors,
-                "linewidth": 0.2,
-                "color": color,
-                "alpha": 1,
-                "zorder": 10,
-            }
-            quiver_kwargs = update_dict(quiver_kwargs, q_kwargs_dict)
-            ax1.quiver(
-                X_array[:, 0],
-                X_array[:, 1],
-                V_array[:, 0],
-                V_array[:, 1],
-                **quiver_kwargs,
-            )
-
-        ax1.set_xlim(np.min(X_array[:, 0]), np.max(X_array[:, 0]) * 1.02)
-        ax1.set_ylim(np.min(X_array[:, 1]), np.max(X_array[:, 1]) * 1.02)
-
-        despline(ax1)  # sns.despline()
-
-        df_embedding = pd.concat([cur_pd, embedding], axis=1)
-        V_vec = cur_pd.loc[:, "velocity"]
-
-        # limit = np.nanmax(
-        #     np.abs(np.nanpercentile(V_vec, [1, 99]))
-        # )  # upper and lowe limit / saturation
-        #
-        # V_vec = V_vec + limit  # that is: tmp_colorandum - (-limit)
-        # V_vec = V_vec / (2 * limit)  # that is: tmp_colorandum / (limit - (-limit))
-        # V_vec = np.clip(V_vec, 0, 1)
-        if show_arrowed_spines is None:
-            show_arrowed_spines_ = True if i == 0 else False
-        else:
-            show_arrowed_spines_ = show_arrowed_spines
-
-        if cur_pd.shape[0] <= figsize[0] * figsize[1] * 1000000:
-            ax2, _ = _matplotlib_points(
-                embedding.iloc[:, :2].values,
-                ax=ax2,
-                labels=None,
-                values=cur_pd.loc[:, "expression"].values,
-                highlights=highlights,
-                cmap=continous_cmap,
-                color_key=discrete_continous_div_color_key[1],
-                color_key_cmap=continous_color_key_cmap,
-                background=continous_background,
-                width=figsize[0],
-                height=figsize[1],
-                show_legend=legend,
-                **scatter_kwargs,
-            )
-        else:
-            ax2, _ = _datashade_points(
-                embedding.iloc[:, :2].values,
-                ax=ax2,
-                labels=None,
-                values=cur_pd.loc[:, "expression"].values,
-                highlights=highlights,
-                cmap=continous_cmap,
-                color_key=discrete_continous_div_color_key[1],
-                color_key_cmap=continous_color_key_cmap,
-                background=continous_background,
-                width=figsize[0],
-                height=figsize[1],
-                show_legend=legend,
-                **scatter_kwargs,
-            )
-
-        ax2.set_title(gn + " (" + ekey + ")")
-        if show_arrowed_spines_:
-            ax2 = arrowed_spines(ax2, basis)
-        else:
-            despline_all(ax2)
-            deaxis_all(ax2)
-
-        v_max = 0.01 if min(V_vec) + max(V_vec) == 0 else np.max(np.abs(V_vec.values))
-        div_scatter_kwargs.update({"vmin": -v_max, "vmax": v_max})
-
-        if cur_pd.shape[0] <= figsize[0] * figsize[1] * 1000000:
-            ax3, _ = _matplotlib_points(
-                embedding.iloc[:, :2].values,
-                ax=ax3,
-                labels=None,
-                values=V_vec.values,
-                highlights=highlights,
-                cmap=divergent_cmap,
-                color_key=discrete_continous_div_color_key[2],
-                color_key_cmap=divergent_color_key_cmap,
-                background=divergent_background,
-                width=figsize[0],
-                height=figsize[1],
-                show_legend=legend,
-                sort="abs",
-                frontier=frontier,
-                **div_scatter_kwargs,
-            )
-        else:
-            ax3, _ = _datashade_points(
-                embedding.iloc[:, :2].values,
-                ax=ax3,
-                labels=None,
-                values=V_vec.values,
-                highlights=highlights,
-                cmap=divergent_cmap,
-                color_key=discrete_continous_div_color_key[2],
-                color_key_cmap=divergent_color_key_cmap,
-                background=divergent_background,
-                width=figsize[0],
-                height=figsize[1],
-                show_legend=legend,
-                sort="abs",
-                frontier=frontier,
-                **div_scatter_kwargs,
-            )
-
-        ax3.set_title(gn + " (" + vkey + ")")
-        if show_arrowed_spines_:
-            ax3 = arrowed_spines(ax3, basis)
-        else:
-            despline_all(ax3)
-            deaxis_all(ax3)
-
-        if (
-            "protein" in adata.obsm.keys()
-            and mode == "full"
-            and all([i in adata.layers.keys() for i in ["uu", "ul", "su", "sl"]])
-        ):
-            if cur_pd.color.unique() != np.nan:
-                if cur_pd.shape[0] <= figsize[0] * figsize[1] * 1000000:
-                    ax4, color = _matplotlib_points(
-                        cur_pd.loc[:, ["P", "S"]].values,
-                        ax=ax4,
-                        labels=None,
-                        values=cur_pd.loc[:, "expression"].values,
-                        highlights=highlights,
-                        cmap=continous_cmap,
-                        color_key=discrete_continous_div_color_key[1],
-                        color_key_cmap=continous_color_key_cmap,
-                        background=continous_background,
-                        width=figsize[0],
-                        height=figsize[1],
-                        show_legend=legend,
-                        **scatter_kwargs,
-                    )
-                else:
-                    ax4, color = _datashade_points(
-                        cur_pd.loc[:, ["P", "S"]].values,
-                        ax=ax4,
-                        labels=None,
-                        values=cur_pd.loc[:, "expression"].values,
-                        highlights=highlights,
-                        cmap=continous_cmap,
-                        color_key=discrete_continous_div_color_key[1],
-                        color_key_cmap=continous_color_key_cmap,
-                        background=continous_background,
-                        width=figsize[0],
-                        height=figsize[1],
-                        show_legend=legend,
-                        **scatter_kwargs,
-                    )
-            else:
-                if cur_pd.shape[0] <= figsize[0] * figsize[1] * 1000000:
-                    ax4, color = _matplotlib_points(
-                        cur_pd.loc[:, ["P", "S"]].values,
-                        ax=ax4,
-                        labels=cur_pd.loc[:, "color"].values,
-                        values=None,
-                        highlights=highlights,
-                        cmap=discrete_cmap,
-                        color_key=discrete_continous_div_color_key[0],
-                        color_key_cmap=discrete_color_key_cmap,
-                        background=discrete_background,
-                        width=figsize[0],
-                        height=figsize[1],
-                        show_legend=legend,
-                        **scatter_kwargs,
-                    )
-                else:
-                    ax4, color = _datashade_points(
-                        cur_pd.loc[:, ["P", "S"]].values,
-                        ax=ax4,
-                        labels=cur_pd.loc[:, "color"].values,
-                        values=None,
-                        highlights=highlights,
-                        cmap=discrete_cmap,
-                        color_key=discrete_continous_div_color_key[0],
-                        color_key_cmap=discrete_color_key_cmap,
-                        background=discrete_background,
-                        width=figsize[0],
-                        height=figsize[1],
-                        show_legend=legend,
-                        **scatter_kwargs,
-                    )
-
-            ax4.set_title(gn)
-            ax4.set_xlabel("spliced (1st moment)")
-            ax4.set_ylabel("protein (1st moment)")
-
-            xnew = np.linspace(cur_pd.loc[:, "P"].min(), cur_pd.loc[:, "P"].max())
-            ax4.plot(
-                xnew,
-                xnew * cur_pd.loc[:, "gamma_P"].unique() + cur_pd.loc[:, "velocity_offset_P"].unique(),
-                dashes=[6, 2],
-                c=font_color,
-            )
-            X_array, V_array = (
-                cur_pd.loc[:, ["P", "S"]].values,
-                cur_pd.loc[:, ["vel_p", "vel_s"]].values,
-            )
-
-            # add quiver:
-            if show_quiver:
-                V_array /= 3 * quiver_autoscaler(X_array, V_array)
-
-                if background is None:
-                    background = rcParams.get("figure.facecolor")
-                if quiver_size is None:
-                    quiver_size = 1
-                if background == "black":
-                    edgecolors = "white"
-                else:
-                    edgecolors = "black"
-
-                head_w, head_l, ax_l, scale = default_quiver_args(quiver_size, quiver_length)
-
-                quiver_kwargs = {
-                    "angles": "xy",
-                    "scale": scale,
-                    "scale_units": "xy",
-                    "width": 0.0005,
-                    "headwidth": head_w,
-                    "headlength": head_l,
-                    "headaxislength": ax_l,
-                    "minshaft": 1,
-                    "minlength": 1,
-                    "pivot": "tail",
-                    "edgecolors": edgecolors,
-                    "linewidth": 0.2,
-                    "color": color,
-                    "alpha": 1,
-                    "zorder": 10,
-                }
-                quiver_kwargs = update_dict(quiver_kwargs, q_kwargs_dict)
-                ax4.quiver(
-                    X_array[:, 0],
-                    X_array[:, 1],
-                    V_array[:, 0],
-                    V_array[:, 1],
-                    **quiver_kwargs,
-                )
-
-            ax4.set_ylim(np.min(X_array[:, 0]), np.max(X_array[:, 0]) * 1.02)
-            ax4.set_xlim(np.min(X_array[:, 1]), np.max(X_array[:, 1]) * 1.02)
-
-            despline(ax1)  # sns.despline()
-
-            V_vec = df_embedding.loc[:, "velocity_p"]
-
-            limit = np.nanmax(np.abs(np.nanpercentile(V_vec, [1, 99])))  # upper and lowe limit / saturation
-
-            V_vec = V_vec + limit  # that is: tmp_colorandum - (-limit)
-            V_vec = V_vec / (2 * limit)  # that is: tmp_colorandum / (limit - (-limit))
-            V_vec = np.clip(V_vec, 0, 1)
-
-            if cur_pd.shape[0] <= figsize[0] * figsize[1] * 1000000:
-                ax5, _ = _matplotlib_points(
-                    embedding.iloc[:, :2],
-                    ax=ax5,
-                    labels=None,
-                    values=embedding.loc[:, "P"].values,
-                    highlights=highlights,
-                    cmap=continous_cmap,
-                    color_key=discrete_continous_div_color_key[1],
-                    color_key_cmap=continous_color_key_cmap,
-                    background=continous_background,
-                    width=figsize[0],
-                    height=figsize[1],
-                    show_legend=legend,
-                    **scatter_kwargs,
-                )
-            else:
-                ax5, _ = _datashade_points(
-                    embedding.iloc[:, :2],
-                    ax=ax5,
-                    labels=None,
-                    values=embedding.loc[:, "P"].values,
-                    highlights=highlights,
-                    cmap=continous_cmap,
-                    color_key=discrete_continous_div_color_key[1],
-                    color_key_cmap=continous_color_key_cmap,
-                    background=continous_background,
-                    width=figsize[0],
-                    height=figsize[1],
-                    show_legend=legend,
-                    **scatter_kwargs,
-                )
-
-            ax5.set_title(gn + " (protein expression)")
-            if show_arrowed_spines_:
-                ax5 = arrowed_spines(ax5, basis)
-            else:
-                despline_all(ax5)
-                deaxis_all(ax5)
-
-            v_max = np.max(np.abs(V_vec.values))
-            div_scatter_kwargs.update({"vmin": -v_max, "vmax": v_max})
-
-            if cur_pd.shape[0] <= figsize[0] * figsize[1] * 1000000:
-                ax6, _ = _matplotlib_points(
-                    embedding.iloc[:, :2],
-                    ax=ax6,
-                    labels=None,
-                    values=V_vec.values,
-                    highlights=highlights,
-                    cmap=divergent_cmap,
-                    color_key=discrete_continous_div_color_key[2],
-                    color_key_cmap=divergent_color_key_cmap,
-                    background=divergent_background,
-                    width=figsize[0],
-                    height=figsize[1],
-                    show_legend=legend,
-                    sort="abs",
-                    frontier=frontier,
-                    **div_scatter_kwargs,
-                )
-            else:
-                ax6, _ = _datashade_points(
-                    embedding.iloc[:, :2],
-                    ax=ax6,
-                    labels=None,
-                    values=V_vec.values,
-                    highlights=highlights,
-                    cmap=divergent_cmap,
-                    color_key=discrete_continous_div_color_key[2],
-                    color_key_cmap=divergent_color_key_cmap,
-                    background=divergent_background,
-                    width=figsize[0],
-                    height=figsize[1],
-                    show_legend=legend,
-                    sort="abs",
-                    frontier=frontier,
-                    **div_scatter_kwargs,
-                )
-
-            ax6.set_title(gn + " (protein velocity)")
-            if show_arrowed_spines_:
-                ax6 = arrowed_spines(ax6, basis)
-            else:
-                despline_all(ax6)
-                deaxis_all(ax6)
-
-    update_vel_params(adata, params_df=vel_params_df)
-
-    return save_show_ret("phase_portraits", save_show_or_return, save_kwargs, g)
 
 
 def dynamics(
@@ -2710,3 +1681,3042 @@ def dynamics(
                     pass  # show protein velocity (steady state and the Gamma distribution model)
     # g.autofmt_xdate(rotation=-30, ha='right')
     return save_show_ret("dynamics", save_show_or_return, save_kwargs, g)
+
+
+def phase_portraits(
+    adata: AnnData,
+    genes: List[str],
+    x: int = 0,
+    y: int = 1,
+    pointsize: Optional[float] = None,
+    vkey: Optional[str] = None,
+    ekey: Optional[str] = None,
+    basis: str = "umap",
+    log1p: bool = True,
+    color: str = "cell_cycle_phase",
+    use_smoothed: bool = True,
+    highlights: Optional[list] = None,
+    discrete_continous_div_themes: Optional[list] = None,
+    discrete_continous_div_cmap: Optional[list] = None,
+    discrete_continous_div_color_key: list = [None, None, None],
+    discrete_continous_div_color_key_cmap: Optional[list] = None,
+    figsize: Tuple[float, float] = (6, 4),
+    ncols: Optional[int] = None,
+    legend: str = "upper left",
+    background: Optional[str] = None,
+    show_quiver: bool = False,
+    quiver_size: Optional[float] = None,
+    quiver_length: Optional[float] = None,
+    no_vel_u: bool = True,
+    frontier: bool = True,
+    q_kwargs_dict: dict = {},
+    show_arrowed_spines: Optional[bool] = None,
+    save_show_or_return: Literal["save", "show", "return"] = "show",
+    save_kwargs: dict = {},
+    **kwargs,
+) -> Optional[Figure]:
+    """Draw the phase portrait, expression values, velocity on the low dimensional embedding.
+
+    Note that this function allows to manually set the theme, cmap, color_key and color_key_cmap for the phase portrait,
+    expression and velocity subplots. When the background is 'black', the default themes for each of those subplots are
+    ["glasbey_dark", "inferno", "div_blue_black_red"], respectively. When the background is 'black', the default themes
+    are "glasbey_white", "viridis", "div_blue_red".
+
+    Args:
+        adata: an AnnData object.
+        genes: a list of gene names that are going to be visualized.
+        x: the column index of the low dimensional embedding for the x-axis. Defaults to 0.
+        y: the column index of the low dimensional embedding for the y-axis. Defaults to 1.
+        pointsize: the scale of the point size. Actual point cell size is calculated as
+            `2500.0 / np.sqrt(adata.shape[0]) * pointsize`. Defaults to None.
+        vkey: the velocity key used for visualizing the magnitude of velocity. Can be either velocity in the layers slot
+            or the keys in the obsm slot. Defaults to None.
+        ekey: the layer of data to represent the gene expression level. Defaults to None.
+        basis: the key of the low dimensional embedding will be used to visualize the cell. Defaults to "umap".
+        log1p: whether to log1p transform the expression so that visualization can be robust to extreme values. Defaults
+            to True.
+        color: the group to be used to color cells. It would only be used for the phase portrait because the other two
+            plots are colored by the velocity magnitude or the gene expression value respectively. Defaults to
+            "cell_cycle_phase".
+        use_smoothed: Whether to use smoothed 1/2-nd moments as gene expression for the first and third columns. This is
+            useful for checking the confidence of transition genes. For example, you may see a very nice linear pattern
+            for some genes with the smoothed expression but this could just be an artificially generated when the number
+            of expressed cells is very low. This raises red flags for the quality of the velocity values we learned for
+            those genes. And we recommend to set the higher values (for example, 10% of all cells) for `min_cell_s`,
+            `min_cell_u` or `shared_count` of the `fg_kwargs` argument of the dyn.pl.receipe_monocle. Note that this is
+            often related to the small single cell datasets (like plate-based scRNA-seq or scSLAM-seq/NASC-seq, etc).
+            Defaults to True.
+        highlights: the color group to be highlighted. If highligts is a list of lists, each list is relate to each
+            color element. Defaults to None.
+        discrete_continous_div_themes: the discrete, continous and divergent color themes to use for plotting,
+            respectively. The description for each element in the list is as following. A small set of predefined themes
+            are provided which have relatively good aesthetics. Available themes are:
+               * 'blue'
+               * 'red'
+               * 'green'
+               * 'inferno'
+               * 'fire'
+               * 'viridis'
+               * 'darkblue'
+               * 'darkred'
+               * 'darkgreen'.
+            Defaults to None.
+        discrete_continous_div_cmap: the names of discrete, continous and divergent matplotlib colormap to use for
+            coloring or shading points. The description for each element in the list is as following. If no labels or
+            values are passed this will be used for shading points according to density (largely only of relevance for
+            very large datasets). If values are passed this will be used for shading according the value. Note that if
+            theme is passed then this value will be overridden by the corresponding option of the theme. Defaults to
+            None.
+        discrete_continous_div_color_key: A list to assign discrete, continous and divergent colors to categoricals.
+            This can either be an explicit dict mapping labels to colors (as strings of form '#RRGGBB'), or an array
+            like object providing one color for each distinct category being provided in `labels`. Either way this
+            mapping will be used to color points according to the label. Note that if theme is passed then this value
+            will be overridden by the corresponding option of the theme. Defaults to [None, None, None].
+        discrete_continous_div_color_key_cmap: the names of discrete, continous and divergent matplotlib colormap to use
+            for categorical coloring. If an explicit `color_key` is not given a color mapping for categories can be
+            generated from the label list and selecting a matching list of colors from the given colormap. Note that if
+            theme is passed then this value will be overridden by the corresponding option of the theme. Defaults to
+            None.
+        figsize: the width and height of each panel in the figure. Defaults to (6, 4).
+        ncols: number of columns in each facet grid. Defaults to None.
+        legend: the position to draw the legend. Legend is drawn by seaborn with “brief” mode, numeric hue and size v
+            ariables will be represented with a sample of evenly spaced values. By default, legend is drawn on top of
+            cells. Defaults to "upper left".
+        background: the background color. If set to None the face color of the figure would be used. Defaults to None.
+        show_quiver: Whether to show the quiver plot. If velocity for x component (corresponds to either spliced, total
+            RNA, protein, etc.) or y component (corresponds to either unspliced, new RNA, protein, etc.) are both
+            calculated, quiver represents velocity for both components otherwise the uncalculated component (usually y
+            component) will be set to be 0. Defaults to False.
+        quiver_size: the size of quiver. If None, we will use set quiver_size to be 1. Note that quiver quiver_size is
+            used to calculate the head_width (10 x quiver_size), head_length (12 x quiver_size) and headaxislength (8 x
+            quiver_size) of the quiver. This is done via the `default_quiver_args` function which also calculate the
+            scale of the quiver (1 / quiver_length). Defaults to None.
+        quiver_length: the length of quiver. The quiver length which will be used to calculate scale of quiver. Note
+            that before applying `default_quiver_args` velocity values are first rescaled via the quiver_autoscaler
+            function. Scale of quiver indicates the number of data units per arrow length unit, e.g., m/s per plot
+            width; a smaller scale parameter makes the arrow longer. Defaults to None.
+        no_vel_u: whether to not show velocity U (velocity of unspliced RNAs). Defaults to True.
+        frontier: whether to add the frontier. Scatter plots can be enhanced by using transparency (alpha) in order to
+            show area of high density and multiple scatter plots can be used to delineate a frontier. See matplotlib
+            tips & tricks cheatsheet (https://github.com/matplotlib/cheatsheets). Originally inspired by figures from
+            scEU-seq paper: https://science.sciencemag.org/content/367/6482/1151. Defaults to True.
+        q_kwargs_dict: the dictionary of the quiver arguments. The default setting of quiver argument is identical to
+            that used in the cell_wise_velocity and grid_velocity. Defaults to {}.
+        show_arrowed_spines: whether to show a pair of arrowed spines represeenting the basis of the scatter is
+            currently using. If None, only the first panel in the expression / velocity plot will have the arrowed
+            spine. Defaults to None.
+        save_show_or_return: whether to save, show or return the figure. Defaults to "show".
+        save_kwargs: a dictionary that will be passed to the save_show_ret function. By default, it is an empty dictionary
+            and the save_show_ret function will use the
+                {
+                    "path": None,
+                    "prefix": 'phase_portraits',
+                    "dpi": None,
+                    "ext": 'pdf',
+                    "transparent": True,
+                    "close": True,
+                    "verbose": True
+                }
+            as its parameters. Otherwise, you can provide a dictionary that properly modify those keys according to
+            your needs. Defaults to {}.
+        **kwargs: additional parameters that will be passed to `plt.scatter` function.
+
+    Raises:
+        ValueError: missing velocity data in the AnnData object.
+        ValueError: cannot find layer with given `v_key`.
+        ValueError: missing velocity_gamma column in the AnnData object.
+        ValueError: missing velocity_gamma column in the AnnData object.
+        ValueError: corrupted AnnData object missing basic labeled/unlabeled or spliced/unspliced data.
+        NotImplementedError: invalid `save_show_or_return`.
+
+    Returns:
+        None would be returned in default and the plotted figure would be shown directly. The matplotlib plot would show
+        1) the phase portrait of each category used in velocity embedding, cells' low dimensional embedding, colored
+        either by 2) the gene expression level or 3) the velocity magnitude values. If set
+        `save_show_or_return='return'` as a kwarg, the axes of the plot would be returned.
+    """
+
+    import matplotlib.pyplot as plt
+    from matplotlib import rcParams
+    from matplotlib.colors import to_hex
+
+    # from matplotlib.colors import DivergingNorm  # TwoSlopeNorm
+
+    has_labeling, has_splicing, splicing_labeling = (
+        adata.uns["dynamics"]["has_labeling"],
+        adata.uns["dynamics"]["has_splicing"],
+        adata.uns["dynamics"]["splicing_labeling"],
+    )
+    if background is None:
+        _background = rcParams.get("figure.facecolor")
+        _background = to_hex(_background) if type(_background) is tuple else _background
+    else:
+        _background = background
+
+    mapper = get_mapper(smoothed=use_smoothed)
+
+    point_size = (
+        500.0 / np.sqrt(adata.shape[0]) * 5 if pointsize is None else 500.0 / np.sqrt(adata.shape[0]) * 5 * pointsize
+    )
+    scatter_kwargs = dict(alpha=0.2, s=point_size, edgecolor=None, linewidth=0)  # (0, 0, 0, 1)
+
+    if kwargs is not None:
+        scatter_kwargs.update(kwargs)
+    div_scatter_kwargs = scatter_kwargs.copy()
+    # div_scatter_kwargs.update({"norm": DivergingNorm(vcenter=0)})
+
+    if type(genes) == str:
+        genes = [genes]
+    _genes = list(set(adata.var.index).intersection(genes))
+
+    # avoid object for dtype in the gamma column https://stackoverflow.com/questions/40809503/python-numpy-typeerror-ufunc-isfinite-not-supported-for-the-input-types
+    if adata.uns["dynamics"]["experiment_type"] in [
+        "one-shot",
+        "kin",
+        "deg",
+        "mix_kin_deg",
+        "mix_pulse_chase",
+    ]:
+        k_name = "gamma_k"
+    else:
+        k_name = "gamma"
+
+    vel_params_df = get_vel_params(adata)
+    valid_id = np.isfinite(np.array(vel_params_df.loc[_genes, k_name], dtype="float")).flatten()
+    genes = np.array(_genes)[valid_id].tolist()
+    # idx = [adata.var.index.to_list().index(i) for i in genes]
+
+    if len(genes) == 0:
+        raise ValueError(
+            "adata has no genes listed in your input gene vector or "
+            "velocity estimation for those genes are not performed. "
+            "Please try to run dyn.tl.dynamics(adata, filter_gene_mode='no')"
+            "to estimate velocity for all genes: {}".format(_genes)
+        )
+
+    if not "X_" + basis in adata.obsm.keys():
+        main_warning("{} is not applied to adata.".format(basis))
+        from ..tools.dimension_reduction import reduceDimension
+
+        reduceDimension(adata, reduction_method=basis)
+
+    embedding = pd.DataFrame(
+        {
+            basis + "_0": adata.obsm["X_" + basis][:, x],
+            basis + "_1": adata.obsm["X_" + basis][:, y],
+        }
+    )
+    embedding.columns = ["dim_1", "dim_2"]
+
+    if has_labeling and not has_splicing:
+        mode = "labeling"
+        vkey = "T" if vkey is None else vkey
+        ekey = "M_t" if ekey is None else ekey
+    elif has_splicing and not has_labeling:
+        mode = "splicing"
+        vkey = "S" if vkey is None else vkey
+        ekey = "M_s" if ekey is None else ekey
+    elif splicing_labeling:
+        mode = "full"
+        vkey = "S" if vkey is None else vkey
+        ekey = "M_s" if ekey is None else ekey
+    elif has_splicing and has_labeling:
+        mode = "full"
+        vkey = "S" if vkey is None else vkey
+        ekey = "M_s" if ekey is None else ekey
+
+    layers = list(adata.layers.keys())
+    layers.extend(["X", "protein", "X_protein"])
+    if ekey in layers:
+        if ekey == "X":
+            E_vec = (
+                index_gene(adata, adata.layers[mapper["X"]], genes)
+                if mapper["X"] in adata.layers.keys()
+                else index_gene(adata, adata.X, genes)
+            )
+        elif ekey in ["protein", "X_protein"]:
+            E_vec = (
+                index_gene(adata, adata.layers[mapper[ekey]], genes)
+                if (ekey in mapper.keys()) and (mapper[ekey] in adata.obsm_keys())
+                else index_gene(adata, adata.obsm[ekey], genes)
+            )
+        else:
+            E_vec = (
+                index_gene(adata, adata.layers[mapper[ekey]], genes)
+                if (ekey in mapper.keys()) and (mapper[ekey] in adata.layers.keys())
+                else index_gene(adata, adata.layers[ekey], genes)
+            )
+
+        if log1p:
+            E_vec = log1p_(adata, E_vec)
+
+    n_cells, n_genes = adata.shape[0], len(genes)
+
+    color_vec = np.repeat(np.nan, n_cells)
+    if color is not None:
+        color_vec = adata.obs[color].to_list()
+
+    if "velocity_" not in vkey:
+        vkey = "velocity_" + vkey
+    if vkey == "velocity_U":
+        V_vec = index_gene(adata, adata.layers["velocity_U"], genes)
+        if "velocity_P" in adata.obsm.keys():
+            P_vec = index_gene(adata, adata.layers["velocity_P"], genes)
+    elif vkey == "velocity_S":
+        V_vec = index_gene(adata, adata.layers["velocity_S"], genes)
+        if "velocity_P" in adata.obsm.keys():
+            P_vec = index_gene(adata, adata.layers["velocity_P"], genes)
+    elif vkey == "velocity_T":
+        V_vec = index_gene(adata, adata.layers["velocity_T"], genes)
+        if "velocity_P" in adata.obsm.keys():
+            P_vec = index_gene(adata, adata.layers["velocity_P"], genes)
+    elif vkey == "velocity_N":
+        V_vec = index_gene(adata, adata.layers["velocity_N"], genes)
+        if "velocity_P" in adata.obsm.keys():
+            P_vec = index_gene(adata, adata.layers["velocity_P"], genes)
+    else:
+        if vkey in adata.layers.keys():
+            V_vec = index_gene(adata, adata.layers[vkey], genes)
+            if "velocity_P" in adata.obsm.keys():
+                P_vec = index_gene(adata, adata.layers["velocity_P"], genes)
+        else:
+            raise ValueError("adata has no vkey {} in either the layers or the obsm slot".format(vkey))
+
+    E_vec, V_vec = (
+        E_vec.A if issparse(E_vec) else E_vec,
+        V_vec.A if issparse(V_vec) else V_vec,
+    )
+
+    if k_name in vel_params_df.columns:
+        if not ("gamma_b" in vel_params_df.columns) or all(vel_params_df.gamma_b.isna()):
+            vel_params_df.loc[:, "gamma_b"] = 0
+        gamma, velocity_offset = (
+            index_gene(adata, vel_params_df.loc[:, k_name].values, genes),
+            index_gene(adata, vel_params_df.gamma_b.values, genes),
+        )
+        (
+            gamma[~np.isfinite(list(gamma))],
+            velocity_offset[~np.isfinite(list(velocity_offset))],
+        ) = (0, 0)
+    else:
+        raise ValueError(
+            "adata does not seem to have velocity_gamma column. Velocity estimation is required before "
+            "running this function."
+        )
+
+    if mode == "labeling":
+        new_mat, tot_mat = (
+            index_gene(adata, adata.layers[mapper["X_new"]], genes),
+            index_gene(adata, adata.layers[mapper["X_total"]], genes),
+        )
+
+        new_mat, tot_mat = (new_mat.A, tot_mat.A) if issparse(new_mat) else (new_mat, tot_mat)
+
+        vel_u, vel_s = (
+            index_gene(adata, adata.layers["velocity_N"].A, genes),
+            index_gene(adata, adata.layers["velocity_T"].A, genes),
+        )
+
+        df = pd.DataFrame(
+            {
+                "new": new_mat.flatten(),
+                "total": tot_mat.flatten(),
+                "gene": genes * n_cells,
+                "gamma": np.tile(gamma, n_cells),
+                "velocity_offset": np.tile(velocity_offset, n_cells),
+                "expression": E_vec.flatten(),
+                "velocity": V_vec.flatten(),
+                "color": np.repeat(color_vec, n_genes),
+                "vel_u": vel_u.flatten(),
+                "vel_s": vel_s.flatten(),
+            },
+            index=range(n_cells * n_genes),
+        )
+
+    elif mode == "splicing":
+        unspliced_mat, spliced_mat = (
+            index_gene(adata, adata.layers[mapper["X_unspliced"]], genes),
+            index_gene(adata, adata.layers[mapper["X_spliced"]], genes),
+        )
+
+        unspliced_mat, spliced_mat = (
+            (unspliced_mat.A, spliced_mat.A) if issparse(unspliced_mat) else (unspliced_mat, spliced_mat)
+        )
+
+        vel_u, vel_s = (
+            np.zeros_like(index_gene(adata, adata.layers["velocity_S"].A, genes)),
+            index_gene(adata, adata.layers["velocity_S"].A, genes),
+        )
+
+        df = pd.DataFrame(
+            {
+                "U": unspliced_mat.flatten(),
+                "S": spliced_mat.flatten(),
+                "gene": genes * n_cells,
+                "gamma": np.tile(gamma, n_cells),
+                "velocity_offset": np.tile(velocity_offset, n_cells),
+                "expression": E_vec.flatten(),
+                "velocity": V_vec.flatten(),
+                "color": np.repeat(color_vec, n_genes),
+                "vel_u": vel_u.flatten(),
+                "vel_s": vel_s.flatten(),
+            },
+            index=range(n_cells * n_genes),
+        )
+
+    elif mode == "full":
+        U, S, N, T = (
+            index_gene(adata, adata.layers[mapper["X_unspliced"]], genes),
+            index_gene(adata, adata.layers[mapper["X_spliced"]], genes),
+            index_gene(adata, adata.layers[mapper["X_new"]], genes),
+            index_gene(adata, adata.layers[mapper["X_total"]], genes),
+        )
+        U, S, N, T = (U.A, S.A, N.A, T.A) if issparse(U) else (U, S, N, T)
+
+        vel_u, vel_s = (
+            (
+                index_gene(adata, adata.layers["velocity_U"].A, genes) if "velocity_U" in adata.layers.keys() else None,
+                index_gene(adata, adata.layers["velocity_S"].A, genes),
+            )
+            if vkey == "velocity_S"
+            else (
+                index_gene(adata, adata.layers["velocity_N"].A, genes) if "velocity_U" in adata.layers.keys() else None,
+                index_gene(adata, adata.layers["velocity_T"].A, genes),
+            )
+        )
+        if "protein" in adata.obsm.keys():
+            if "delta" in vel_params_df.columns:
+                gamma_P = vel_params_df.delta[genes].values
+                velocity_offset_P = (
+                    [0] * n_cells
+                    if (not ("delta_b" in vel_params_df.columns) or vel_params_df.delta_b.unique() is None)
+                    else vel_params_df.delta_b[genes].values
+                )
+            else:
+                raise ValueError(
+                    "adata does not seem to have velocity_gamma column. Velocity estimation is required before "
+                    "running this function."
+                )
+
+            P = (
+                index_gene(adata, adata.obsm[mapper["X_protein"]], genes)
+                if (["X_protein"] in adata.obsm.keys() or [mapper["X_protein"]] in adata.obsm.keys())
+                else index_gene(adata, adata.obsm["protein"], genes)
+            )
+            P = P.A if issparse(P) else P
+            if issparse(P_vec):
+                P_vec = P_vec.A
+
+            vel_p = np.zeros_like(adata.obsm["velocity_P"][:, :])
+
+            # df = pd.DataFrame({"uu": uu.flatten(), "ul": ul.flatten(), "su": su.flatten(), "sl": sl.flatten(), "P": P.flatten(),
+            #                    'gene': genes * n_cells, 'prediction': np.tile(gamma, n_cells) * uu.flatten() +
+            #                     np.tile(velocity_offset, n_cells), "velocity": genes * n_cells}, index=range(n_cells * n_genes))
+            df = pd.DataFrame(
+                {
+                    "new": N.flatten(),
+                    "total": T.flatten(),
+                    "S": S.flatten(),
+                    "U": U.flatten(),
+                    "P": P.flatten(),
+                    "gene": genes * n_cells,
+                    "gamma": np.tile(gamma, n_cells),
+                    "velocity_offset": np.tile(velocity_offset, n_cells),
+                    "gamma_P": np.tile(gamma_P, n_cells),
+                    "velocity_offset_P": np.tile(velocity_offset_P, n_cells),
+                    "expression": E_vec.flatten(),
+                    "velocity": V_vec.flatten(),
+                    "velocity_protein": P_vec.flatten(),
+                    "color": np.repeat(color_vec, n_genes),
+                    "vel_u": vel_u.flatten() if vel_u is not None else None,
+                    "vel_s": vel_s.flatten(),
+                    "vel_p": vel_p.flatten(),
+                },
+                index=range(n_cells * n_genes),
+            )
+        else:
+            df = pd.DataFrame(
+                {
+                    "new": N.flatten(),
+                    "total": T.flatten(),
+                    "S": S.flatten(),
+                    "U": U.flatten(),
+                    "gene": genes * n_cells,
+                    "gamma": np.tile(gamma, n_cells),
+                    "velocity_offset": np.tile(velocity_offset, n_cells),
+                    "expression": E_vec.flatten(),
+                    "velocity": V_vec.flatten(),
+                    "color": np.repeat(color_vec, n_genes),
+                    "vel_u": vel_u.flatten(),
+                    "vel_s": vel_s.flatten(),
+                },
+                index=range(n_cells * n_genes),
+            )
+    else:
+        raise ValueError(
+            "Your adata is corrupted. Make sure that your layer has keys new, old for the labelling mode, "
+            "spliced, ambiguous, unspliced for the splicing model and uu, ul, su, sl for the full mode"
+        )
+
+    num_per_gene = 6 if ("protein" in adata.obsm.keys() and mode == "full") else 3
+    ncols = min([num_per_gene, ncols]) if ncols is not None else num_per_gene
+    nrow, ncol = int(np.ceil(num_per_gene * n_genes / ncols)), ncols
+    if figsize is None:
+        g = plt.figure(None, (3 * ncol, 3 * nrow), facecolor=_background)  # , dpi=160
+    else:
+        g = plt.figure(None, (figsize[0] * ncol, figsize[1] * nrow), facecolor=_background)  # , dpi=160
+
+    if discrete_continous_div_themes is None:
+        if _background in ["#ffffff", "black"]:
+            discrete_theme, continous_theme, divergent_theme = (
+                "glasbey_dark",
+                "inferno",
+                "div_blue_black_red",
+            )
+        else:
+            discrete_theme, continous_theme, divergent_theme = (
+                "glasbey_white",
+                "viridis",
+                "div_blue_red",
+            )
+    else:
+        (
+            discrete_theme,
+            continous_theme,
+            divergent_theme,
+        ) = discrete_continous_div_themes
+
+    discrete_cmap, discrete_color_key_cmap, discrete_background = (
+        _themes[discrete_theme]["cmap"] if discrete_continous_div_cmap is None else discrete_continous_div_cmap[0],
+        _themes[discrete_theme]["color_key_cmap"]
+        if discrete_continous_div_color_key_cmap is None
+        else discrete_continous_div_color_key_cmap[0],
+        _themes[discrete_theme]["background"],
+    )
+    continous_cmap, continous_color_key_cmap, continous_background = (
+        _themes[continous_theme]["cmap"] if discrete_continous_div_cmap is None else discrete_continous_div_cmap[1],
+        _themes[continous_theme]["color_key_cmap"]
+        if discrete_continous_div_color_key_cmap is None
+        else discrete_continous_div_color_key_cmap[1],
+        _themes[continous_theme]["background"],
+    )
+    divergent_cmap, divergent_color_key_cmap, divergent_background = (
+        _themes[divergent_theme]["cmap"] if discrete_continous_div_cmap is None else discrete_continous_div_cmap[2],
+        _themes[divergent_theme]["color_key_cmap"]
+        if discrete_continous_div_color_key_cmap is None
+        else discrete_continous_div_color_key_cmap[2],
+        _themes[divergent_theme]["background"],
+    )
+
+    font_color = _select_font_color(discrete_background)
+
+    # the following code is inspired by https://github.com/velocyto-team/velocyto-notebooks/blob/master/python/DentateGyrus.ipynb
+    gs = plt.GridSpec(nrow, ncol, wspace=0.5, hspace=0.36)
+    for i, gn in enumerate(genes):
+        if num_per_gene == 3:
+            ax1, ax2, ax3 = (
+                plt.subplot(gs[i * 3]),
+                plt.subplot(gs[i * 3 + 1]),
+                plt.subplot(gs[i * 3 + 2]),
+            )
+        elif num_per_gene == 6:
+            ax1, ax2, ax3, ax4, ax5, ax6 = (
+                plt.subplot(gs[i * 3]),
+                plt.subplot(gs[i * 3 + 1]),
+                plt.subplot(gs[i * 3 + 2]),
+                plt.subplot(gs[i * 3 + 3]),
+                plt.subplot(gs[i * 3 + 4]),
+                plt.subplot(gs[i * 3 + 5]),
+            )
+        try:
+            ix = np.where(adata.var.index == gn)[0][0]
+        except:
+            continue
+        cur_pd = df.loc[df.gene == gn, :]
+        if cur_pd.color.isna().all():
+            if cur_pd.shape[0] <= figsize[0] * figsize[1] * 1000000:
+                ax1, color = _matplotlib_points(
+                    cur_pd.loc[:, ["S", "U"]].values
+                    if vkey == "velocity_S"
+                    else cur_pd.loc[:, ["total", "new"]].values,
+                    ax=ax1,
+                    labels=None,
+                    values=cur_pd.loc[:, "expression"].values,
+                    highlights=highlights,
+                    cmap=continous_cmap,
+                    color_key=discrete_continous_div_color_key[1],
+                    color_key_cmap=continous_color_key_cmap,
+                    background=continous_background,
+                    width=figsize[0],
+                    height=figsize[1],
+                    show_legend=legend,
+                    **scatter_kwargs,
+                )
+            else:
+                ax1, color = _datashade_points(
+                    cur_pd.loc[:, ["S", "U"]].values
+                    if vkey == "velocity_S"
+                    else cur_pd.loc[:, ["total", "new"]].values,
+                    ax=ax1,
+                    labels=None,
+                    values=cur_pd.loc[:, "expression"].values,
+                    highlights=highlights,
+                    cmap=continous_cmap,
+                    color_key=discrete_continous_div_color_key[1],
+                    color_key_cmap=continous_color_key_cmap,
+                    background=continous_background,
+                    width=figsize[0],
+                    height=figsize[1],
+                    show_legend=legend,
+                    **scatter_kwargs,
+                )
+        else:
+            if cur_pd.shape[0] <= figsize[0] * figsize[1] * 1000000:
+                ax1, color = _matplotlib_points(
+                    cur_pd.loc[:, ["S", "U"]].values
+                    if vkey == "velocity_S"
+                    else cur_pd.loc[:, ["total", "new"]].values,
+                    ax=ax1,
+                    labels=cur_pd.loc[:, "color"],
+                    values=None,
+                    highlights=highlights,
+                    cmap=discrete_cmap,
+                    color_key=discrete_continous_div_color_key[0],
+                    color_key_cmap=discrete_color_key_cmap,
+                    background=discrete_background,
+                    width=figsize[0],
+                    height=figsize[1],
+                    show_legend=legend,
+                    **scatter_kwargs,
+                )
+            else:
+                ax1, color = _datashade_points(
+                    cur_pd.loc[:, ["S", "U"]].values
+                    if vkey == "velocity_S"
+                    else cur_pd.loc[:, ["total", "new"]].values,
+                    ax=ax1,
+                    labels=cur_pd.loc[:, "color"],
+                    values=None,
+                    highlights=highlights,
+                    cmap=discrete_cmap,
+                    color_key=discrete_continous_div_color_key[0],
+                    color_key_cmap=discrete_color_key_cmap,
+                    background=discrete_background,
+                    width=figsize[0],
+                    height=figsize[1],
+                    show_legend=legend,
+                    **scatter_kwargs,
+                )
+
+        ax1.set_title(gn)
+        if vkey == "velocity_S":
+            ax1.set_xlabel("spliced (1st moment)")
+            ax1.set_ylabel("unspliced (1st moment)")
+        elif vkey == "velocity_T":
+            ax1.set_xlabel("total (1st moment)")
+            ax1.set_ylabel("new (1st moment)")
+
+        # only linear regression fitting of extreme cells will be plotted together with U-S phase plane.
+        if vkey in ["velocity_S", "velocity_T"]:
+            xnew = (
+                np.linspace(cur_pd.loc[:, "S"].min(), cur_pd.loc[:, "S"].max() * 0.80)
+                if vkey == "velocity_S"
+                else np.linspace(
+                    cur_pd.loc[:, "total"].min(),
+                    cur_pd.loc[:, "total"].max() * 0.80,
+                )
+            )
+            ax1.plot(
+                xnew,
+                xnew * cur_pd.loc[:, "gamma"].unique() + cur_pd.loc[:, "velocity_offset"].unique(),
+                dashes=[6, 2],
+                c=font_color,
+            )
+
+        X_array, V_array = (
+            cur_pd.loc[:, ["S", "U"]].values if vkey == "velocity_S" else cur_pd.loc[:, ["total", "new"]].values,
+            cur_pd.loc[:, ["vel_s", "vel_u"]].values,
+        )
+        if no_vel_u and vkey == "velocity_S":
+            V_array[:, 1] = 0
+        # add quiver:
+        if show_quiver:
+            V_array /= 3 * quiver_autoscaler(X_array, V_array)
+
+            if background is None:
+                background = rcParams.get("figure.facecolor")
+            if quiver_size is None:
+                quiver_size = 1
+            if background == "black":
+                edgecolors = "white"
+            else:
+                edgecolors = "black"
+
+            head_w, head_l, ax_l, scale = default_quiver_args(quiver_size, quiver_length)
+
+            quiver_kwargs = {
+                "angles": "xy",
+                "scale": scale,
+                "scale_units": "xy",
+                "width": 0.0005,
+                "headwidth": head_w,
+                "headlength": head_l,
+                "headaxislength": ax_l,
+                "minshaft": 1,
+                "minlength": 1,
+                "pivot": "tail",
+                "edgecolors": edgecolors,
+                "linewidth": 0.2,
+                "color": color,
+                "alpha": 1,
+                "zorder": 10,
+            }
+            quiver_kwargs = update_dict(quiver_kwargs, q_kwargs_dict)
+            ax1.quiver(
+                X_array[:, 0],
+                X_array[:, 1],
+                V_array[:, 0],
+                V_array[:, 1],
+                **quiver_kwargs,
+            )
+
+        ax1.set_xlim(np.min(X_array[:, 0]), np.max(X_array[:, 0]) * 1.02)
+        ax1.set_ylim(np.min(X_array[:, 1]), np.max(X_array[:, 1]) * 1.02)
+
+        despline(ax1)  # sns.despline()
+
+        df_embedding = pd.concat([cur_pd, embedding], axis=1)
+        V_vec = cur_pd.loc[:, "velocity"]
+
+        # limit = np.nanmax(
+        #     np.abs(np.nanpercentile(V_vec, [1, 99]))
+        # )  # upper and lowe limit / saturation
+        #
+        # V_vec = V_vec + limit  # that is: tmp_colorandum - (-limit)
+        # V_vec = V_vec / (2 * limit)  # that is: tmp_colorandum / (limit - (-limit))
+        # V_vec = np.clip(V_vec, 0, 1)
+        if show_arrowed_spines is None:
+            show_arrowed_spines_ = True if i == 0 else False
+        else:
+            show_arrowed_spines_ = show_arrowed_spines
+
+        if cur_pd.shape[0] <= figsize[0] * figsize[1] * 1000000:
+            ax2, _ = _matplotlib_points(
+                embedding.iloc[:, :2].values,
+                ax=ax2,
+                labels=None,
+                values=cur_pd.loc[:, "expression"].values,
+                highlights=highlights,
+                cmap=continous_cmap,
+                color_key=discrete_continous_div_color_key[1],
+                color_key_cmap=continous_color_key_cmap,
+                background=continous_background,
+                width=figsize[0],
+                height=figsize[1],
+                show_legend=legend,
+                **scatter_kwargs,
+            )
+        else:
+            ax2, _ = _datashade_points(
+                embedding.iloc[:, :2].values,
+                ax=ax2,
+                labels=None,
+                values=cur_pd.loc[:, "expression"].values,
+                highlights=highlights,
+                cmap=continous_cmap,
+                color_key=discrete_continous_div_color_key[1],
+                color_key_cmap=continous_color_key_cmap,
+                background=continous_background,
+                width=figsize[0],
+                height=figsize[1],
+                show_legend=legend,
+                **scatter_kwargs,
+            )
+
+        ax2.set_title(gn + " (" + ekey + ")")
+        if show_arrowed_spines_:
+            ax2 = arrowed_spines(ax2, basis)
+        else:
+            despline_all(ax2)
+            deaxis_all(ax2)
+
+        v_max = 0.01 if min(V_vec) + max(V_vec) == 0 else np.max(np.abs(V_vec.values))
+        div_scatter_kwargs.update({"vmin": -v_max, "vmax": v_max})
+
+        if cur_pd.shape[0] <= figsize[0] * figsize[1] * 1000000:
+            ax3, _ = _matplotlib_points(
+                embedding.iloc[:, :2].values,
+                ax=ax3,
+                labels=None,
+                values=V_vec.values,
+                highlights=highlights,
+                cmap=divergent_cmap,
+                color_key=discrete_continous_div_color_key[2],
+                color_key_cmap=divergent_color_key_cmap,
+                background=divergent_background,
+                width=figsize[0],
+                height=figsize[1],
+                show_legend=legend,
+                sort="abs",
+                frontier=frontier,
+                **div_scatter_kwargs,
+            )
+        else:
+            ax3, _ = _datashade_points(
+                embedding.iloc[:, :2].values,
+                ax=ax3,
+                labels=None,
+                values=V_vec.values,
+                highlights=highlights,
+                cmap=divergent_cmap,
+                color_key=discrete_continous_div_color_key[2],
+                color_key_cmap=divergent_color_key_cmap,
+                background=divergent_background,
+                width=figsize[0],
+                height=figsize[1],
+                show_legend=legend,
+                sort="abs",
+                frontier=frontier,
+                **div_scatter_kwargs,
+            )
+
+        ax3.set_title(gn + " (" + vkey + ")")
+        if show_arrowed_spines_:
+            ax3 = arrowed_spines(ax3, basis)
+        else:
+            despline_all(ax3)
+            deaxis_all(ax3)
+
+        if (
+            "protein" in adata.obsm.keys()
+            and mode == "full"
+            and all([i in adata.layers.keys() for i in ["uu", "ul", "su", "sl"]])
+        ):
+            if cur_pd.color.unique() != np.nan:
+                if cur_pd.shape[0] <= figsize[0] * figsize[1] * 1000000:
+                    ax4, color = _matplotlib_points(
+                        cur_pd.loc[:, ["P", "S"]].values,
+                        ax=ax4,
+                        labels=None,
+                        values=cur_pd.loc[:, "expression"].values,
+                        highlights=highlights,
+                        cmap=continous_cmap,
+                        color_key=discrete_continous_div_color_key[1],
+                        color_key_cmap=continous_color_key_cmap,
+                        background=continous_background,
+                        width=figsize[0],
+                        height=figsize[1],
+                        show_legend=legend,
+                        **scatter_kwargs,
+                    )
+                else:
+                    ax4, color = _datashade_points(
+                        cur_pd.loc[:, ["P", "S"]].values,
+                        ax=ax4,
+                        labels=None,
+                        values=cur_pd.loc[:, "expression"].values,
+                        highlights=highlights,
+                        cmap=continous_cmap,
+                        color_key=discrete_continous_div_color_key[1],
+                        color_key_cmap=continous_color_key_cmap,
+                        background=continous_background,
+                        width=figsize[0],
+                        height=figsize[1],
+                        show_legend=legend,
+                        **scatter_kwargs,
+                    )
+            else:
+                if cur_pd.shape[0] <= figsize[0] * figsize[1] * 1000000:
+                    ax4, color = _matplotlib_points(
+                        cur_pd.loc[:, ["P", "S"]].values,
+                        ax=ax4,
+                        labels=cur_pd.loc[:, "color"].values,
+                        values=None,
+                        highlights=highlights,
+                        cmap=discrete_cmap,
+                        color_key=discrete_continous_div_color_key[0],
+                        color_key_cmap=discrete_color_key_cmap,
+                        background=discrete_background,
+                        width=figsize[0],
+                        height=figsize[1],
+                        show_legend=legend,
+                        **scatter_kwargs,
+                    )
+                else:
+                    ax4, color = _datashade_points(
+                        cur_pd.loc[:, ["P", "S"]].values,
+                        ax=ax4,
+                        labels=cur_pd.loc[:, "color"].values,
+                        values=None,
+                        highlights=highlights,
+                        cmap=discrete_cmap,
+                        color_key=discrete_continous_div_color_key[0],
+                        color_key_cmap=discrete_color_key_cmap,
+                        background=discrete_background,
+                        width=figsize[0],
+                        height=figsize[1],
+                        show_legend=legend,
+                        **scatter_kwargs,
+                    )
+
+            ax4.set_title(gn)
+            ax4.set_xlabel("spliced (1st moment)")
+            ax4.set_ylabel("protein (1st moment)")
+
+            xnew = np.linspace(cur_pd.loc[:, "P"].min(), cur_pd.loc[:, "P"].max())
+            ax4.plot(
+                xnew,
+                xnew * cur_pd.loc[:, "gamma_P"].unique() + cur_pd.loc[:, "velocity_offset_P"].unique(),
+                dashes=[6, 2],
+                c=font_color,
+            )
+            X_array, V_array = (
+                cur_pd.loc[:, ["P", "S"]].values,
+                cur_pd.loc[:, ["vel_p", "vel_s"]].values,
+            )
+
+            # add quiver:
+            if show_quiver:
+                V_array /= 3 * quiver_autoscaler(X_array, V_array)
+
+                if background is None:
+                    background = rcParams.get("figure.facecolor")
+                if quiver_size is None:
+                    quiver_size = 1
+                if background == "black":
+                    edgecolors = "white"
+                else:
+                    edgecolors = "black"
+
+                head_w, head_l, ax_l, scale = default_quiver_args(quiver_size, quiver_length)
+
+                quiver_kwargs = {
+                    "angles": "xy",
+                    "scale": scale,
+                    "scale_units": "xy",
+                    "width": 0.0005,
+                    "headwidth": head_w,
+                    "headlength": head_l,
+                    "headaxislength": ax_l,
+                    "minshaft": 1,
+                    "minlength": 1,
+                    "pivot": "tail",
+                    "edgecolors": edgecolors,
+                    "linewidth": 0.2,
+                    "color": color,
+                    "alpha": 1,
+                    "zorder": 10,
+                }
+                quiver_kwargs = update_dict(quiver_kwargs, q_kwargs_dict)
+                ax4.quiver(
+                    X_array[:, 0],
+                    X_array[:, 1],
+                    V_array[:, 0],
+                    V_array[:, 1],
+                    **quiver_kwargs,
+                )
+
+            ax4.set_ylim(np.min(X_array[:, 0]), np.max(X_array[:, 0]) * 1.02)
+            ax4.set_xlim(np.min(X_array[:, 1]), np.max(X_array[:, 1]) * 1.02)
+
+            despline(ax1)  # sns.despline()
+
+            V_vec = df_embedding.loc[:, "velocity_p"]
+
+            limit = np.nanmax(np.abs(np.nanpercentile(V_vec, [1, 99])))  # upper and lowe limit / saturation
+
+            V_vec = V_vec + limit  # that is: tmp_colorandum - (-limit)
+            V_vec = V_vec / (2 * limit)  # that is: tmp_colorandum / (limit - (-limit))
+            V_vec = np.clip(V_vec, 0, 1)
+
+            if cur_pd.shape[0] <= figsize[0] * figsize[1] * 1000000:
+                ax5, _ = _matplotlib_points(
+                    embedding.iloc[:, :2],
+                    ax=ax5,
+                    labels=None,
+                    values=embedding.loc[:, "P"].values,
+                    highlights=highlights,
+                    cmap=continous_cmap,
+                    color_key=discrete_continous_div_color_key[1],
+                    color_key_cmap=continous_color_key_cmap,
+                    background=continous_background,
+                    width=figsize[0],
+                    height=figsize[1],
+                    show_legend=legend,
+                    **scatter_kwargs,
+                )
+            else:
+                ax5, _ = _datashade_points(
+                    embedding.iloc[:, :2],
+                    ax=ax5,
+                    labels=None,
+                    values=embedding.loc[:, "P"].values,
+                    highlights=highlights,
+                    cmap=continous_cmap,
+                    color_key=discrete_continous_div_color_key[1],
+                    color_key_cmap=continous_color_key_cmap,
+                    background=continous_background,
+                    width=figsize[0],
+                    height=figsize[1],
+                    show_legend=legend,
+                    **scatter_kwargs,
+                )
+
+            ax5.set_title(gn + " (protein expression)")
+            if show_arrowed_spines_:
+                ax5 = arrowed_spines(ax5, basis)
+            else:
+                despline_all(ax5)
+                deaxis_all(ax5)
+
+            v_max = np.max(np.abs(V_vec.values))
+            div_scatter_kwargs.update({"vmin": -v_max, "vmax": v_max})
+
+            if cur_pd.shape[0] <= figsize[0] * figsize[1] * 1000000:
+                ax6, _ = _matplotlib_points(
+                    embedding.iloc[:, :2],
+                    ax=ax6,
+                    labels=None,
+                    values=V_vec.values,
+                    highlights=highlights,
+                    cmap=divergent_cmap,
+                    color_key=discrete_continous_div_color_key[2],
+                    color_key_cmap=divergent_color_key_cmap,
+                    background=divergent_background,
+                    width=figsize[0],
+                    height=figsize[1],
+                    show_legend=legend,
+                    sort="abs",
+                    frontier=frontier,
+                    **div_scatter_kwargs,
+                )
+            else:
+                ax6, _ = _datashade_points(
+                    embedding.iloc[:, :2],
+                    ax=ax6,
+                    labels=None,
+                    values=V_vec.values,
+                    highlights=highlights,
+                    cmap=divergent_cmap,
+                    color_key=discrete_continous_div_color_key[2],
+                    color_key_cmap=divergent_color_key_cmap,
+                    background=divergent_background,
+                    width=figsize[0],
+                    height=figsize[1],
+                    show_legend=legend,
+                    sort="abs",
+                    frontier=frontier,
+                    **div_scatter_kwargs,
+                )
+
+            ax6.set_title(gn + " (protein velocity)")
+            if show_arrowed_spines_:
+                ax6 = arrowed_spines(ax6, basis)
+            else:
+                despline_all(ax6)
+                deaxis_all(ax6)
+
+    update_vel_params(adata, params_df=vel_params_df)
+
+    return save_show_ret("phase_portraits", save_show_or_return, save_kwargs, g)
+
+
+def plot_kin_det(
+    adata,
+    genes,
+    has_splicing,
+    use_smoothed,
+    log_unnormalized,
+    t,
+    T,
+    T_uniq,
+    unit,
+    X_data,
+    X_fit_data,
+    logLL,
+    true_p,
+    grp_len,
+    sub_plot_n,
+    ncols,
+    boxwidth,
+    gs,
+    fig_mat,
+    gene_order,
+    y_log_scale,
+    true_param_prefix,
+    true_params,
+    est_params,
+    show_variance,
+    show_kin_parameters,
+):
+    import matplotlib.pyplot as plt
+
+    true_alpha, true_beta, true_gamma = true_params
+    alpha, beta, gamma = est_params
+    if len(T_uniq) > 6:
+        xticks, xticks_labels = (
+            np.round(np.linspace(0, max(T_uniq), 6), 2),
+            np.round(np.linspace(0, max(T_uniq), 6), 2),
+        )
+    else:
+        xticks, xticks_labels = T_uniq, T_uniq
+
+    if has_splicing:
+        if "M_ul" in adata.layers.keys() and use_smoothed:
+            title_ = ["M_ul", "M_sl"]
+            layers = ["M_ul", "M_sl", "M_uu", "M_su"]
+            layer_u, layer_s = "M_ul", "M_sl"
+        else:
+            title_ = ["X_ul", "X_sl"]
+            layers = ["X_ul", "X_sl", "X_uu", "X_su"]
+            layer_u, layer_s = "X_ul", "X_sl"
+
+        _, X_raw = prepare_data_has_splicing(
+            adata,
+            genes,
+            T,
+            layer_u=layer_u,
+            layer_s=layer_s,
+            total_layers=layers,
+        )
+    else:
+        if "M_t" in adata.layers.keys() and use_smoothed:
+            title_ = ["M_n"]
+            total_layer = "M_t"
+            layer = "M_n"
+        else:
+            title_ = ["X_new"]
+            total_layer = "X_total"
+            layer = "X_new"
+
+        _, X_raw = prepare_data_no_splicing(adata, adata.var.index, T, layer=layer, total_layer=total_layer)
+
+    padding = 0.185 if not show_variance else 0
+    for i, gene_name in enumerate(genes):
+        cur_X_data, cur_X_fit_data, cur_logLL = (
+            X_data[i],
+            X_fit_data[i],
+            logLL[i],
+        )
+
+        for j in range(sub_plot_n):
+
+            row_ind = int(np.floor(i / ncols))  # make sure unlabled and labeled are in the same column.
+
+            col_loc = (row_ind * sub_plot_n + j) * ncols * grp_len + (i % ncols - 1) * grp_len + 1
+            row_i, col_i = np.where(fig_mat == col_loc)
+            ax = plt.subplot(gs[col_loc]) if gene_order == "column" else plt.subplot(gs[fig_mat[col_i, row_i][0]])
+            if j == 0:
+                ax.text(
+                    0.01 + padding,
+                    0.80,
+                    r"$logLL={0:.2f}$".format(cur_logLL)
+                    + " \n"
+                    + r"$t_{1/2} = $"
+                    + "{0:.2f}".format(np.log(2) / gamma[i])
+                    + unit[0],
+                    ha="left",
+                    va="top",
+                    transform=ax.transAxes,
+                )
+
+                if show_kin_parameters:
+                    if true_param_prefix is not None:
+                        if has_splicing:
+                            ax.text(
+                                0.01 + padding,
+                                0.99,
+                                r"$\alpha$"
+                                + ": {0:.2f}; ".format(true_alpha[i])
+                                + r"$\hat \alpha$"
+                                + ": {0:.2f} \n".format(alpha[i])
+                                + r"$\beta$"
+                                + ": {0:.2f}; ".format(true_beta[i])
+                                + r"$\hat \beta$"
+                                + ": {0:.2f} \n".format(beta[i])
+                                + r"$\gamma$"
+                                + ": {0:.2f}; ".format(true_gamma[i])
+                                + r"$\hat \gamma$"
+                                + ": {0:.2f} \n".format(gamma[i]),
+                                ha="left",
+                                va="top",
+                                transform=ax.transAxes,
+                            )
+                        else:
+                            ax.text(
+                                0.01 + padding,
+                                0.99,
+                                r"$\alpha$"
+                                + ": {0:.2f}; ".format(true_alpha[i])
+                                + r"$\hat \alpha$"
+                                + ": {0:.2f} \n".format(alpha[i])
+                                + r"$\gamma$"
+                                + ": {0:.2f}; ".format(true_gamma[i])
+                                + r"$\hat \gamma$"
+                                + ": {0:.2f} \n".format(gamma[i]),
+                                ha="left",
+                                va="top",
+                                transform=ax.transAxes,
+                            )
+                    else:
+                        if has_splicing:
+                            ax.text(
+                                0.01 + padding,
+                                0.99,
+                                r"$\hat \alpha$"
+                                + ": {0:.2f} \n".format(alpha[i])
+                                + r"$\hat \beta$"
+                                + ": {0:.2f} \n".format(beta[i])
+                                + r"$\hat \gamma$"
+                                + ": {0:.2f} \n".format(gamma[i]),
+                                ha="left",
+                                va="top",
+                                transform=ax.transAxes,
+                            )
+                        else:
+                            ax.text(
+                                0.01 + padding,
+                                0.99,
+                                r"$\hat \alpha$"
+                                + ": {0:.2f} \n".format(alpha[i])
+                                + r"$\hat \gamma$"
+                                + ": {0:.2f} \n".format(gamma[i]),
+                                ha="left",
+                                va="top",
+                                transform=ax.transAxes,
+                            )
+            if show_variance:
+                if has_splicing:
+                    Obs = X_raw[i][j][0].A.flatten() if issparse(X_raw[i][j][0]) else X_raw[i][j][0].flatten()
+                else:
+                    Obs = X_raw[i].A.flatten() if issparse(X_raw[i][0]) else X_raw[i].flatten()
+                ax.boxplot(
+                    x=[Obs[T == std] for std in T_uniq],
+                    positions=T_uniq,
+                    widths=boxwidth,
+                    showfliers=False,
+                    showmeans=True,
+                )
+                if has_splicing:
+                    ax.plot(T_uniq, cur_X_fit_data[j], "b")
+                    ax.plot(T_uniq, cur_X_data[j], "k--")
+                else:
+                    ax.plot(T_uniq, cur_X_fit_data.flatten(), "b")
+                    ax.plot(T_uniq, cur_X_data.flatten(), "k--")
+
+                ax.set_title(gene_name + " (" + title_[j] + ")")
+            else:
+                ax.plot(T_uniq, cur_X_fit_data.T)
+                ax.legend(title_)
+                ax.plot(T_uniq, cur_X_data.T, "k--")
+                ax.set_title(gene_name)
+
+            # properly set the xticks
+            ax.set_xticks(xticks)
+            ax.set_xticklabels(xticks_labels, rotation=30, ha="right")
+
+            if true_param_prefix is not None:
+                if has_splicing:
+                    ax.plot(t, true_p[j], "r")
+                else:
+                    ax.plot(t, true_p[j], "r")
+            ax.set_xlabel("time (" + unit + ")")
+            if y_log_scale:
+                ax.set_yscale("log")
+            if log_unnormalized:
+                ax.set_ylabel("Expression (log)")
+            else:
+                ax.set_ylabel("Expression")
+
+    return gs
+
+
+def plot_kin_sto(
+    adata,
+    genes,
+    has_splicing,
+    use_smoothed,
+    log_unnormalized,
+    t,
+    T,
+    T_uniq,
+    unit,
+    X_data,
+    X_fit_data,
+    logLL,
+    true_p,
+    grp_len,
+    sub_plot_n,
+    ncols,
+    boxwidth,
+    gs,
+    fig_mat,
+    gene_order,
+    y_log_scale,
+    true_param_prefix,
+    true_params,
+    est_params,
+    show_moms_fit,
+    show_variance,
+    show_kin_parameters,
+):
+    import matplotlib.pyplot as plt
+
+    true_alpha, true_beta, true_gamma = true_params
+    alpha, beta, gamma = est_params
+    if len(T_uniq) > 6:
+        xticks, xticks_labels = (
+            np.round(np.linspace(0, max(T_uniq), 6), 2),
+            np.round(np.linspace(0, max(T_uniq), 6), 2),
+        )
+    else:
+        xticks, xticks_labels = T_uniq, T_uniq
+
+    if has_splicing:
+        if "M_ul" in adata.layers.keys() and use_smoothed:
+            title_ = ["M_ul", "M_sl", "M_ul2", "M_sl2", "M_ul_sl"] if show_moms_fit else ["M_ul", "M_sl"]
+            layers = ["M_ul", "M_sl", "M_uu", "M_su"]
+            layer_u, layer_s = "M_ul", "M_sl"
+        else:
+            title_ = ["X_ul", "X_sl", "X_ul2", "X_sl2", "X_ul_sl"] if show_moms_fit else ["X_ul", "X_sl"]
+            layers = ["X_ul", "X_sl", "X_uu", "X_su"]
+            layer_u, layer_s = "X_ul", "X_sl"
+
+        _, X_raw = prepare_data_has_splicing(
+            adata,
+            genes,
+            T,
+            layer_u=layer_u,
+            layer_s=layer_s,
+            total_layers=layers,
+        )
+    else:
+        if "M_t" in adata.layers.keys() and use_smoothed:
+            title_ = ["M_n", "M_n2"] if show_moms_fit else ["M_n"]
+            total_layer = "M_t"
+            layer = "M_n"
+        else:
+            title_ = ["new", "n2"] if show_moms_fit else ["new"]
+            total_layer = "total"
+            layer = "new"
+
+        _, X_raw = prepare_data_no_splicing(adata, adata.var.index, T, layer=layer, total_layer=total_layer)
+
+    padding = 0.185 if not show_variance else 0
+    for i, gene_name in enumerate(genes):
+        cur_X_data, cur_X_fit_data, cur_logLL = (
+            X_data[i],
+            X_fit_data[i],
+            logLL[i],
+        )
+
+        for j in range(sub_plot_n):
+            row_ind = int(np.floor(i / ncols))  # make sure unlabled and labeled are in the same column.
+
+            col_loc = (row_ind * sub_plot_n + j) * ncols * grp_len + (i % ncols - 1) * grp_len + 1
+            row_i, col_i = np.where(fig_mat == col_loc)
+            ax = plt.subplot(gs[col_loc]) if gene_order == "column" else plt.subplot(gs[fig_mat[col_i, row_i][0]])
+            if j == 0:
+                ax.text(
+                    0.01 + padding,
+                    0.80,
+                    r"$logLL={0:.2f}$".format(cur_logLL)
+                    + " \n"
+                    + r"$t_{1/2} = $"
+                    + "{0:.2f}".format(np.log(2) / gamma[i])
+                    + unit[0],
+                    ha="left",
+                    va="top",
+                    transform=ax.transAxes,
+                )
+                if show_kin_parameters:
+                    if true_param_prefix is not None:
+                        if has_splicing:
+                            ax.text(
+                                0.01 + padding,
+                                0.99,
+                                r"$\alpha$"
+                                + ": {0:.2f}; ".format(true_alpha[i])
+                                + r"$\hat \alpha$"
+                                + ": {0:.2f} \n".format(alpha[i])
+                                + r"$\beta$"
+                                + ": {0:.2f}; ".format(true_beta[i])
+                                + r"$\hat \beta$"
+                                + ": {0:.2f} \n".format(beta[i])
+                                + r"$\gamma$"
+                                + ": {0:.2f}; ".format(true_gamma[i])
+                                + r"$\hat \gamma$"
+                                + ": {0:.2f} \n".format(gamma[i]),
+                                ha="left",
+                                va="top",
+                                transform=ax.transAxes,
+                            )
+                        else:
+                            ax.text(
+                                0.01 + padding,
+                                0.99,
+                                r"$\alpha$"
+                                + ": {0:.2f}; ".format(true_alpha[i])
+                                + r"$\hat \alpha$"
+                                + ": {0:.2f} \n".format(alpha[i])
+                                + r"$\gamma$"
+                                + ": {0:.2f}; ".format(true_gamma[i])
+                                + r"$\hat \gamma$"
+                                + ": {0:.2f} \n".format(gamma[i]),
+                                ha="left",
+                                va="top",
+                                transform=ax.transAxes,
+                            )
+                    else:
+                        if has_splicing:
+                            ax.text(
+                                0.01 + padding,
+                                0.99,
+                                r"$\hat \alpha$"
+                                + ": {0:.2f} \n".format(alpha[i])
+                                + r"$\hat \beta$"
+                                + ": {0:.2f} \n".format(beta[i])
+                                + r"$\hat \gamma$"
+                                + ": {0:.2f} \n".format(gamma[i]),
+                                ha="left",
+                                va="top",
+                                transform=ax.transAxes,
+                            )
+                        else:
+                            ax.text(
+                                0.01 + padding,
+                                0.99,
+                                r"$\hat \alpha$"
+                                + ": {0:.2f} \n".format(alpha[i])
+                                + r"$\hat \gamma$"
+                                + ": {0:.2f} \n".format(gamma[i]),
+                                ha="left",
+                                va="top",
+                                transform=ax.transAxes,
+                            )
+            max_box_plots = 2 if has_splicing else 1
+            # if show_variance first plot box plot
+            if show_variance:
+                if j < max_box_plots:
+                    if has_splicing:
+                        Obs = X_raw[i][j][0].A.flatten() if issparse(X_raw[i][j][0]) else X_raw[i][j][0].flatten()
+                    else:
+                        Obs = X_raw[i].A.flatten() if issparse(X_raw[i][0]) else X_raw[i].flatten()
+
+                    ax.boxplot(
+                        x=[Obs[T == std] for std in T_uniq],
+                        positions=T_uniq,
+                        widths=boxwidth,
+                        showfliers=False,
+                        showmeans=True,
+                    )
+                    ax.plot(T_uniq, cur_X_fit_data[j].T, "b")
+                    ax.plot(T_uniq, cur_X_data[j], "k--")
+                    ax.set_title(gene_name + " (" + title_[j] + ")")
+            # if not show_variance then first plot line plot
+            else:
+                if j == 0:
+                    if has_splicing:
+                        ax.plot(T_uniq, cur_X_fit_data[[0, 1]].T)
+                        ax.legend(title_[:2])
+                        ax.plot(T_uniq, cur_X_data[[0, 1]].T, "k--")
+                    else:
+                        ax.plot(T_uniq, cur_X_fit_data[j].T)
+                        ax.legend([title_[0]])
+                        ax.plot(T_uniq, cur_X_data[j].T, "k--")
+                    ax.set_title(gene_name)
+
+            # other subplots
+            if not ((show_variance and j < max_box_plots) or (not show_variance and j == 0)):
+                ax.plot(T_uniq, cur_X_fit_data[j].T)
+                ax.plot(T_uniq, cur_X_data[j], "k--")
+                if show_variance:
+                    ax.legend([title_[j]])
+                else:
+                    if has_splicing:
+                        ax.legend([title_[j + 1]])
+                    else:
+                        ax.legend([title_[j]])
+
+                ax.set_title(gene_name)
+
+            # properly set the xticks
+            ax.set_xticks(xticks)
+            ax.set_xticklabels(xticks_labels, rotation=30, ha="right")
+
+            if true_param_prefix is not None:
+                ax.plot(t, true_p[j], "r")
+            ax.set_xlabel("time (" + unit + ")")
+            if y_log_scale:
+                ax.set_yscale("log")
+            if log_unnormalized:
+                ax.set_ylabel("Expression (log)")
+            else:
+                ax.set_ylabel("Expression")
+
+    return gs
+
+
+def plot_kin_mix(
+    adata,
+    genes,
+    has_splicing,
+    use_smoothed,
+    log_unnormalized,
+    t,
+    T,
+    T_uniq,
+    unit,
+    X_data,
+    X_fit_data,
+    logLL,
+    true_p,
+    grp_len,
+    sub_plot_n,
+    ncols,
+    boxwidth,
+    gs,
+    fig_mat,
+    gene_order,
+    y_log_scale,
+    true_param_prefix,
+    true_params,
+    est_params,
+    show_variance,
+    show_kin_parameters,
+):
+    import matplotlib.pyplot as plt
+
+    true_alpha, true_beta, true_gamma = true_params
+    alpha, beta, gamma = est_params
+    if len(T_uniq) > 6:
+        xticks, xticks_labels = (
+            np.round(np.linspace(0, max(T_uniq), 6), 2),
+            np.round(np.linspace(0, max(T_uniq), 6), 2),
+        )
+    else:
+        xticks, xticks_labels = T_uniq, T_uniq
+
+    if has_splicing:
+        if "M_ul" in adata.layers.keys() and use_smoothed:
+            title_ = ["M_ul", "M_sl", "M_uu", "M_su"]
+            layers = ["M_ul", "M_sl", "M_uu", "M_su"]
+            layer_u, layer_s = "M_ul", "M_sl"
+        else:
+            title_ = ["X_ul", "X_sl", "X_uu", "X_su"]
+            layers = ["X_ul", "X_sl", "X_uu", "X_su"]
+            layer_u, layer_s = "X_ul", "X_sl"
+
+        _, X_raw = prepare_data_has_splicing(
+            adata,
+            genes,
+            T,
+            layer_u=layer_u,
+            layer_s=layer_s,
+            total_layers=layers,
+        )
+    else:
+        if "M_t" in adata.layers.keys() and use_smoothed:
+            title_ = ["M_n", "M_o"]
+            total_layer = "M_t"
+            layer = "M_n"
+        else:
+            title_ = ["new", "old"]
+            total_layer = "total"
+            layer = "new"
+
+        _, X_raw = prepare_data_no_splicing(
+            adata,
+            adata.var.index,
+            T,
+            layer=layer,
+            total_layer=total_layer,
+            return_old=True,
+        )
+
+    padding = 0.185 if not show_variance else 0
+    for i, gene_name in enumerate(genes):
+        cur_X_data, cur_X_fit_data, cur_logLL = (
+            X_data[i],
+            X_fit_data[i],
+            logLL[i],
+        )
+
+        for j in range(sub_plot_n):
+            row_ind = int(np.floor(i / ncols))  # make sure unlabled and labeled are in the same column.
+
+            col_loc = (row_ind * sub_plot_n + j) * ncols * grp_len + (i % ncols - 1) * grp_len + 1
+            row_i, col_i = np.where(fig_mat == col_loc)
+            ax = plt.subplot(gs[col_loc]) if gene_order == "column" else plt.subplot(gs[fig_mat[col_i, row_i][0]])
+            if j == 0:
+                ax.text(
+                    0.01 + padding,
+                    0.80,
+                    r"$logLL={0:.2f}$".format(cur_logLL)
+                    + " \n"
+                    + r"$t_{1/2} = $"
+                    + "{0:.2f}".format(np.log(2) / gamma[i])
+                    + unit[0],
+                    ha="left",
+                    va="top",
+                    transform=ax.transAxes,
+                )
+                if show_kin_parameters:
+                    if true_param_prefix is not None:
+                        if has_splicing:
+                            ax.text(
+                                0.01 + padding,
+                                0.99,
+                                r"$\alpha$"
+                                + ": {0:.2f}; ".format(true_alpha[i])
+                                + r"$\hat \alpha$"
+                                + ": {0:.2f} \n".format(alpha[i])
+                                + r"$\beta$"
+                                + ": {0:.2f}; ".format(true_beta[i])
+                                + r"$\hat \beta$"
+                                + ": {0:.2f} \n".format(beta[i])
+                                + r"$\gamma$"
+                                + ": {0:.2f}; ".format(true_gamma[i])
+                                + r"$\hat \gamma$"
+                                + ": {0:.2f} \n".format(gamma[i]),
+                                ha="left",
+                                va="top",
+                                transform=ax.transAxes,
+                            )
+                        else:
+                            ax.text(
+                                0.01 + padding,
+                                0.99,
+                                r"$\alpha$"
+                                + ": {0:.2f}; ".format(true_alpha[i])
+                                + r"$\hat \alpha$"
+                                + ": {0:.2f} \n".format(alpha[i])
+                                + r"$\gamma$"
+                                + ": {0:.2f}; ".format(true_gamma[i])
+                                + r"$\hat \gamma$"
+                                + ": {0:.2f} \n".format(gamma[i]),
+                                ha="left",
+                                va="top",
+                                transform=ax.transAxes,
+                            )
+                    else:
+                        if has_splicing:
+                            ax.text(
+                                0.01 + padding,
+                                0.99,
+                                r"$\hat \alpha$"
+                                + ": {0:.2f} \n".format(alpha[i])
+                                + r"$\hat \beta$"
+                                + ": {0:.2f} \n".format(beta[i])
+                                + r"$\hat \gamma$"
+                                + ": {0:.2f} \n".format(gamma[i]),
+                                ha="left",
+                                va="top",
+                                transform=ax.transAxes,
+                            )
+                        else:
+                            ax.text(
+                                0.01 + padding,
+                                0.99,
+                                r"$\hat \alpha$"
+                                + ": {0:.2f} \n".format(alpha[i])
+                                + r"$\hat \gamma$"
+                                + ": {0:.2f} \n".format(gamma[i]),
+                                ha="left",
+                                va="top",
+                                transform=ax.transAxes,
+                            )
+            max_box_plots = 2 if has_splicing else 1
+            max_line_plots = 2 if has_splicing else 1
+            # if show_variance first plot box plot
+            if show_variance:
+                if j < max_box_plots:
+                    if has_splicing:
+                        Obs = X_raw[i][j][0].A.flatten() if issparse(X_raw[i][j][0]) else X_raw[i][j][0].flatten()
+                    else:
+                        Obs = X_raw[i][j][0].A.flatten() if issparse(X_raw[i][j][0]) else X_raw[i][j][0].flatten()
+
+                    ax.boxplot(
+                        x=[Obs[T == std] for std in T_uniq],
+                        positions=T_uniq,
+                        widths=boxwidth,
+                        showfliers=False,
+                        showmeans=True,
+                    )
+                    ax.plot(T_uniq, cur_X_fit_data[j].T, "b")
+                    ax.plot(T_uniq, cur_X_data[j], "k--")
+                    ax.set_title(gene_name + " (" + title_[j] + ")")
+            # if not show_variance then first plot line plot
+            else:
+                if has_splicing:
+                    if j == 0:
+                        ax.plot(T_uniq, cur_X_fit_data[[0, 1]].T)
+                        ax.plot(T_uniq, cur_X_data[[0, 1]].T, "k--")
+                        ax.legend(title_[:2])
+                    elif j == 1:
+                        ax.plot(T_uniq, cur_X_fit_data[[2, 3]].T)
+                        ax.plot(T_uniq, cur_X_data[[2, 3]].T, "k--")
+                        ax.legend(title_[2:4])
+                    ax.set_title(gene_name)
+                else:
+                    if j == 0:
+                        ax.plot(T_uniq, cur_X_fit_data[[0, 1]].T)
+                        ax.plot(T_uniq, cur_X_data[[0, 1]].T, "k--")
+                        ax.legend(title_[:2])
+                    ax.set_title(gene_name)
+            # other subplots
+            if not ((show_variance and j < max_box_plots) or (not show_variance and j < max_line_plots)):
+                ax.plot(T_uniq, cur_X_fit_data[j].T)
+                ax.plot(T_uniq, cur_X_data[j], "k--")
+                if show_variance:
+                    ax.legend([title_[j]])
+                else:
+                    if has_splicing:
+                        ax.legend([title_[j + 2]])
+                    else:
+                        ax.legend([title_[j + 1]])
+
+                ax.set_title(gene_name)
+
+            # properly set the xticks
+            ax.set_xticks(xticks)
+            ax.set_xticklabels(xticks_labels, rotation=30, ha="right")
+
+            if true_param_prefix is not None:
+                ax.plot(t, true_p[j], "r")
+            ax.set_xlabel("time (" + unit + ")")
+            if y_log_scale:
+                ax.set_yscale("log")
+            if log_unnormalized:
+                ax.set_ylabel("Expression (log)")
+            else:
+                ax.set_ylabel("Expression")
+
+    return gs
+
+
+def plot_kin_mix_det_sto(
+    adata,
+    genes,
+    has_splicing,
+    use_smoothed,
+    log_unnormalized,
+    t,
+    T,
+    T_uniq,
+    unit,
+    X_data,
+    X_fit_data,
+    logLL,
+    true_p,
+    grp_len,
+    sub_plot_n,
+    ncols,
+    boxwidth,
+    gs,
+    fig_mat,
+    gene_order,
+    y_log_scale,
+    true_param_prefix,
+    true_params,
+    est_params,
+    show_moms_fit,
+    show_variance,
+    show_kin_parameters,
+):
+    import matplotlib.pyplot as plt
+
+    true_alpha, true_beta, true_gamma = true_params
+    alpha, beta, gamma = est_params
+    if len(T_uniq) > 6:
+        xticks, xticks_labels = (
+            np.round(np.linspace(0, max(T_uniq), 6), 2),
+            np.round(np.linspace(0, max(T_uniq), 6), 2),
+        )
+    else:
+        xticks, xticks_labels = T_uniq, T_uniq
+
+    if has_splicing:
+        if "M_ul" in adata.layers.keys() and use_smoothed:
+            title_ = (
+                ["M_ul", "M_sl", "M_uu", "M_su", "M_uu2", "M_su2", "M_uu_su"]
+                if show_moms_fit
+                else ["M_ul", "M_sl", "M_uu", "M_su"]
+            )
+            layers = ["M_ul", "M_sl", "M_uu", "M_su"]
+        else:
+            title_ = (
+                ["X_ul", "X_sl", "X_uu", "X_su", "X_uu2", "X_su2", "X_uu_su"]
+                if show_moms_fit
+                else ["X_ul", "X_sl", "X_uu", "X_su"]
+            )
+            layers = ["X_ul", "X_sl", "X_uu", "X_su"]
+
+        _, X_raw = prepare_data_mix_has_splicing(
+            adata,
+            adata.var.index,
+            T,
+            layer_u=layers[2],
+            layer_s=layers[3],
+            layer_ul=layers[0],
+            layer_sl=layers[1],
+            total_layers=layers,
+            mix_model_indices=[0, 1, 5, 6, 7, 8, 9],
+        )
+    else:
+        if "M_t" in adata.layers.keys() and use_smoothed:
+            title_ = ["M_n", "M_o", "M_o2"] if show_moms_fit else ["M_n", "M_o"]
+            layers = ["M_n", "M_t"]
+            total_layer = "M_t"
+        else:
+            title_ = ["X_new", "X_old", "X_o2"] if show_moms_fit else ["X_new", "X_old"]
+            layers = ["X_new", "X_total"]
+            total_layer = "X_total"
+
+        _, X_raw = prepare_data_mix_no_splicing(
+            adata,
+            adata.var.index,
+            T,
+            layer_n=layers[0],
+            layer_t=layers[1],
+            total_layer=total_layer,
+            mix_model_indices=[0, 2, 3],
+        )
+
+    padding = 0.185 if not show_variance else 0
+    for i, gene_name in enumerate(genes):
+        cur_X_data, cur_X_fit_data, cur_logLL = (
+            X_data[i],
+            X_fit_data[i],
+            logLL[i],
+        )
+
+        for j in range(sub_plot_n):
+            row_ind = int(np.floor(i / ncols))  # make sure unlabled and labeled are in the same column.
+
+            col_loc = (row_ind * sub_plot_n + j) * ncols * grp_len + (i % ncols - 1) * grp_len + 1
+            row_i, col_i = np.where(fig_mat == col_loc)
+            ax = plt.subplot(gs[col_loc]) if gene_order == "column" else plt.subplot(gs[fig_mat[col_i, row_i][0]])
+            if j == 0:
+                ax.text(
+                    0.01 + padding,
+                    0.80,
+                    r"$logLL={0:.2f}$".format(cur_logLL)
+                    + " \n"
+                    + r"$t_{1/2} = $"
+                    + "{0:.2f}".format(np.log(2) / gamma[i])
+                    + unit[0],
+                    ha="left",
+                    va="top",
+                    transform=ax.transAxes,
+                )
+                if show_kin_parameters:
+                    if true_param_prefix is not None:
+                        if has_splicing:
+                            ax.text(
+                                0.01 + padding,
+                                0.99,
+                                r"$\alpha$"
+                                + ": {0:.2f}; ".format(true_alpha[i])
+                                + r"$\hat \alpha$"
+                                + ": {0:.2f} \n".format(alpha[i])
+                                + r"$\beta$"
+                                + ": {0:.2f}; ".format(true_beta[i])
+                                + r"$\hat \beta$"
+                                + ": {0:.2f} \n".format(beta[i])
+                                + r"$\gamma$"
+                                + ": {0:.2f}; ".format(true_gamma[i])
+                                + r"$\hat \gamma$"
+                                + ": {0:.2f} \n".format(gamma[i]),
+                                ha="left",
+                                va="top",
+                                transform=ax.transAxes,
+                            )
+                        else:
+                            ax.text(
+                                0.01 + padding,
+                                0.99,
+                                r"$\alpha$"
+                                + ": {0:.2f}; ".format(true_alpha[i])
+                                + r"$\hat \alpha$"
+                                + ": {0:.2f} \n".format(alpha[i])
+                                + r"$\gamma$"
+                                + ": {0:.2f}; ".format(true_gamma[i])
+                                + r"$\hat \gamma$"
+                                + ": {0:.2f} \n".format(gamma[i]),
+                                ha="left",
+                                va="top",
+                                transform=ax.transAxes,
+                            )
+                    else:
+                        if has_splicing:
+                            ax.text(
+                                0.01 + padding,
+                                0.99,
+                                r"$\hat \alpha$"
+                                + ": {0:.2f} \n".format(alpha[i])
+                                + r"$\hat \beta$"
+                                + ": {0:.2f} \n".format(beta[i])
+                                + r"$\hat \gamma$"
+                                + ": {0:.2f} \n".format(gamma[i]),
+                                ha="left",
+                                va="top",
+                                transform=ax.transAxes,
+                            )
+                        else:
+                            ax.text(
+                                0.01 + padding,
+                                0.99,
+                                r"$\hat \alpha$"
+                                + ": {0:.2f} \n".format(alpha[i])
+                                + r"$\hat \gamma$"
+                                + ": {0:.2f} \n".format(gamma[i]),
+                                ha="left",
+                                va="top",
+                                transform=ax.transAxes,
+                            )
+
+            max_box_plots = 4 if has_splicing else 2
+            max_line_plots = 2 if has_splicing else 1
+            # if show_variance first plot box plot
+            if show_variance:
+                if j < max_box_plots:
+                    if has_splicing:
+                        Obs = X_raw[i][j][0].A.flatten() if issparse(X_raw[i][j][0]) else X_raw[i][j][0].flatten()
+                    else:
+                        Obs = X_raw[i][j][0].A.flatten() if issparse(X_raw[i][j][0]) else X_raw[i][j][0].flatten()
+
+                    ax.boxplot(
+                        x=[Obs[T == std] for std in T_uniq],
+                        positions=T_uniq,
+                        widths=boxwidth,
+                        showfliers=False,
+                        showmeans=True,
+                    )
+                    ax.plot(T_uniq, cur_X_fit_data[j].T, "b")
+                    ax.plot(T_uniq, cur_X_data[j], "k--")
+                    ax.set_title(gene_name + " (" + title_[j] + ")")
+            # if not show_variance then first plot line plot
+            else:
+                if has_splicing:
+                    if j == 0:
+                        ax.plot(T_uniq, cur_X_fit_data[[0, 1]].T)
+                        ax.plot(T_uniq, cur_X_data[[0, 1]].T, "k--")
+                        ax.legend(title_[:2])
+                    elif j == 1:
+                        ax.plot(T_uniq, cur_X_fit_data[[2, 3]].T)
+                        ax.plot(T_uniq, cur_X_data[[2, 3]].T, "k--")
+                        ax.legend(title_[2:4])
+                    ax.set_title(gene_name)
+                else:
+                    if j == 0:
+                        ax.plot(T_uniq, cur_X_fit_data[[0, 1]].T)
+                        ax.plot(T_uniq, cur_X_data[[0, 1]].T, "k--")
+                        ax.legend(title_[:2])
+                    ax.set_title(gene_name)
+            # other subplots
+            if not ((show_variance and j < max_box_plots) or (not show_variance and j < max_line_plots)):
+                ax.plot(T_uniq, cur_X_fit_data[j].T)
+                ax.plot(T_uniq, cur_X_data[j], "k--")
+                if show_variance:
+                    ax.legend([title_[j]])
+                else:
+                    if has_splicing:
+                        ax.legend([title_[j + 2]])
+                    else:
+                        ax.legend([title_[j + 1]])
+
+                ax.set_title(gene_name)
+
+            # properly set the xticks
+            ax.set_xticks(xticks)
+            ax.set_xticklabels(xticks_labels, rotation=30, ha="right")
+
+            if true_param_prefix is not None:
+                ax.plot(t, true_p[j], "r")
+            ax.set_xlabel("time (" + unit + ")")
+            if y_log_scale:
+                ax.set_yscale("log")
+            if log_unnormalized:
+                ax.set_ylabel("Expression (log)")
+            else:
+                ax.set_ylabel("Expression")
+    return gs
+
+
+def plot_kin_mix_sto_sto(
+    adata,
+    genes,
+    has_splicing,
+    use_smoothed,
+    log_unnormalized,
+    t,
+    T,
+    T_uniq,
+    unit,
+    X_data,
+    X_fit_data,
+    logLL,
+    true_p,
+    grp_len,
+    sub_plot_n,
+    ncols,
+    boxwidth,
+    gs,
+    fig_mat,
+    gene_order,
+    y_log_scale,
+    true_param_prefix,
+    true_params,
+    est_params,
+    show_moms_fit,
+    show_variance,
+    show_kin_parameters,
+):
+    import matplotlib.pyplot as plt
+
+    true_alpha, true_beta, true_gamma = true_params
+    alpha, beta, gamma = est_params
+    if len(T_uniq) > 6:
+        xticks, xticks_labels = (
+            np.round(np.linspace(0, max(T_uniq), 6), 2),
+            np.round(np.linspace(0, max(T_uniq), 6), 2),
+        )
+    else:
+        xticks, xticks_labels = T_uniq, T_uniq
+
+    if has_splicing:
+        if "M_ul" in adata.layers.keys() and use_smoothed:
+            title_ = (
+                [
+                    "M_ul",
+                    "M_sl",
+                    "M_uu",
+                    "M_su",
+                    "M_ul2",
+                    "M_sl2",
+                    "M_ul_sl",
+                    "M_uu2",
+                    "M_su2",
+                    "M_uu_su",
+                ]
+                if show_moms_fit
+                else ["M_ul", "M_sl", "M_uu", "M_su"]
+            )
+            layers = ["M_ul", "M_sl", "M_uu", "M_su"]
+        else:
+            title_ = (
+                [
+                    "X_ul",
+                    "X_sl",
+                    "X_uu",
+                    "X_su",
+                    "X_ul2",
+                    "X_sl2",
+                    "X_ul_sl",
+                    "X_uu2",
+                    "X_su2",
+                    "X_uu_su",
+                ]
+                if show_moms_fit
+                else ["X_ul", "X_sl", "X_uu", "X_su"]
+            )
+            layers = ["X_ul", "X_sl", "X_uu", "X_su"]
+
+        reorder_inds = [0, 1, 5, 6, 2, 3, 4, 7, 8, 9]
+        _, X_raw = prepare_data_mix_has_splicing(
+            adata,
+            adata.var.index,
+            T,
+            layer_u=layers[2],
+            layer_s=layers[3],
+            layer_ul=layers[0],
+            layer_sl=layers[1],
+            total_layers=layers,
+            mix_model_indices=reorder_inds,
+        )
+    else:
+        if "M_t" in adata.layers.keys() and use_smoothed:
+            title_ = ["M_n", "M_o", "M_n2", "M_o2"] if show_moms_fit else ["M_n", "M_o"]
+            total_layer = "M_t"
+            layers = ["M_n", "M_t"]
+        else:
+            title_ = ["X_new", "X_old", "X_n2", "X_o2"] if show_moms_fit else ["X_new", "X_old"]
+            total_layer = "X_total"
+            layers = ["X_new", "X_total"]
+
+        reorder_inds = [0, 2, 1, 3]
+        _, X_raw = prepare_data_mix_no_splicing(
+            adata,
+            adata.var.index,
+            T,
+            layer_n=layers[0],
+            layer_t=layers[1],
+            total_layer=total_layer,
+            mix_model_indices=reorder_inds,
+        )
+
+    padding = 0.185 if not show_variance else 0
+    for i, gene_name in enumerate(genes):
+        cur_X_data, cur_X_fit_data, cur_logLL = (
+            X_data[i],
+            X_fit_data[i],
+            logLL[i],
+        )
+
+        cur_X_fit_data = cur_X_fit_data[reorder_inds]
+        cur_X_data = cur_X_data[reorder_inds]
+
+        for j in range(sub_plot_n):
+            row_ind = int(np.floor(i / ncols))  # make sure unlabled and labeled are in the same column.
+
+            col_loc = (row_ind * sub_plot_n + j) * ncols * grp_len + (i % ncols - 1) * grp_len + 1
+            row_i, col_i = np.where(fig_mat == col_loc)
+            ax = plt.subplot(gs[col_loc]) if gene_order == "column" else plt.subplot(gs[fig_mat[col_i, row_i][0]])
+            if j == 0:
+                ax.text(
+                    0.01 + padding,
+                    0.80,
+                    r"$logLL={0:.2f}$".format(cur_logLL)
+                    + " \n"
+                    + r"$t_{1/2} = $"
+                    + "{0:.2f}".format(np.log(2) / gamma[i])
+                    + unit[0],
+                    ha="left",
+                    va="top",
+                    transform=ax.transAxes,
+                )
+                if show_kin_parameters:
+                    if true_param_prefix is not None:
+                        if has_splicing:
+                            ax.text(
+                                0.01 + padding,
+                                0.99,
+                                r"$\alpha$"
+                                + ": {0:.2f}; ".format(true_alpha[i])
+                                + r"$\hat \alpha$"
+                                + ": {0:.2f} \n".format(alpha[i])
+                                + r"$\beta$"
+                                + ": {0:.2f}; ".format(true_beta[i])
+                                + r"$\hat \beta$"
+                                + ": {0:.2f} \n".format(beta[i])
+                                + r"$\gamma$"
+                                + ": {0:.2f}; ".format(true_gamma[i])
+                                + r"$\hat \gamma$"
+                                + ": {0:.2f} \n".format(gamma[i]),
+                                ha="left",
+                                va="top",
+                                transform=ax.transAxes,
+                            )
+                        else:
+                            ax.text(
+                                0.01 + padding,
+                                0.99,
+                                r"$\alpha$"
+                                + ": {0:.2f}; ".format(true_alpha[i])
+                                + r"$\hat \alpha$"
+                                + ": {0:.2f} \n".format(alpha[i])
+                                + r"$\gamma$"
+                                + ": {0:.2f}; ".format(true_gamma[i])
+                                + r"$\hat \gamma$"
+                                + ": {0:.2f} \n".format(gamma[i]),
+                                ha="left",
+                                va="top",
+                                transform=ax.transAxes,
+                            )
+                    else:
+                        if has_splicing:
+                            ax.text(
+                                0.01 + padding,
+                                0.99,
+                                r"$\hat \alpha$"
+                                + ": {0:.2f} \n".format(alpha[i])
+                                + r"$\hat \beta$"
+                                + ": {0:.2f} \n".format(beta[i])
+                                + r"$\hat \gamma$"
+                                + ": {0:.2f} \n".format(gamma[i]),
+                                ha="left",
+                                va="top",
+                                transform=ax.transAxes,
+                            )
+                        else:
+                            ax.text(
+                                0.01 + padding,
+                                0.99,
+                                r"$\hat \alpha$"
+                                + ": {0:.2f} \n".format(alpha[i])
+                                + r"$\hat \gamma$"
+                                + ": {0:.2f} \n".format(gamma[i]),
+                                ha="left",
+                                va="top",
+                                transform=ax.transAxes,
+                            )
+            max_box_plots = 4 if has_splicing else 2
+            max_line_plots = 2 if has_splicing else 1
+            # if show_variance first plot box plot
+            if show_variance:
+                if j < max_box_plots:
+                    if has_splicing:
+                        Obs = X_raw[i][j][0].A.flatten() if issparse(X_raw[i][j][0]) else X_raw[i][j][0].flatten()
+                    else:
+                        Obs = X_raw[i][j][0].A.flatten() if issparse(X_raw[i][j][0]) else X_raw[i][j][0].flatten()
+
+                    ax.boxplot(
+                        x=[Obs[T == std] for std in T_uniq],
+                        positions=T_uniq,
+                        widths=boxwidth,
+                        showfliers=False,
+                        showmeans=True,
+                    )
+                    ax.plot(T_uniq, cur_X_fit_data[j].T, "b")
+                    ax.plot(T_uniq, cur_X_data[j], "k--")
+                    ax.set_title(gene_name + " (" + title_[j] + ")")
+            # if not show_variance then first plot line plot
+            else:
+                if has_splicing:
+                    if j == 0:
+                        ax.plot(T_uniq, cur_X_fit_data[[0, 1]].T)
+                        ax.plot(T_uniq, cur_X_data[[0, 1]].T, "k--")
+                        ax.legend(title_[:2])
+                    elif j == 1:
+                        ax.plot(T_uniq, cur_X_fit_data[[2, 3]].T)
+                        ax.plot(T_uniq, cur_X_data[[2, 3]].T, "k--")
+                        ax.legend(title_[2:4])
+                    ax.set_title(gene_name)
+                else:
+                    if j == 0:
+                        ax.plot(T_uniq, cur_X_fit_data[[0, 1]].T)
+                        ax.plot(T_uniq, cur_X_data[[0, 1]].T, "k--")
+                        ax.legend(title_[:2])
+                    ax.set_title(gene_name)
+            # other subplots
+            if not ((show_variance and j < max_box_plots) or (not show_variance and j < max_line_plots)):
+                ax.plot(T_uniq, cur_X_fit_data[j].T)
+                ax.plot(T_uniq, cur_X_data[j], "k--")
+                if show_variance:
+                    ax.legend([title_[j]])
+                else:
+                    if has_splicing:
+                        ax.legend([title_[j + 2]])
+                    else:
+                        ax.legend([title_[j + 1]])
+
+                ax.set_title(gene_name)
+
+            # properly set the xticks
+            ax.set_xticks(xticks)
+            ax.set_xticklabels(xticks_labels, rotation=30, ha="right")
+
+            if true_param_prefix is not None:
+                ax.plot(t, true_p[j], "r")
+            ax.set_xlabel("time (" + unit + ")")
+            if y_log_scale:
+                ax.set_yscale("log")
+            if log_unnormalized:
+                ax.set_ylabel("Expression (log)")
+            else:
+                ax.set_ylabel("Expression")
+
+    return gs
+
+
+def plot_deg_det(
+    adata,
+    genes,
+    has_splicing,
+    use_smoothed,
+    log_unnormalized,
+    t,
+    T,
+    T_uniq,
+    unit,
+    X_data,
+    X_fit_data,
+    logLL,
+    true_p,
+    grp_len,
+    sub_plot_n,
+    ncols,
+    boxwidth,
+    gs,
+    fig_mat,
+    gene_order,
+    y_log_scale,
+    true_param_prefix,
+    true_params,
+    est_params,
+    show_variance,
+    show_kin_parameters,
+):
+    import matplotlib.pyplot as plt
+
+    true_alpha, true_beta, true_gamma = true_params
+    alpha, beta, gamma = est_params
+    if len(T_uniq) > 6:
+        xticks, xticks_labels = (
+            np.round(np.linspace(0, max(T_uniq), 6), 2),
+            np.round(np.linspace(0, max(T_uniq), 6), 2),
+        )
+    else:
+        xticks, xticks_labels = T_uniq, T_uniq
+
+    if has_splicing:
+        if "M_ul" in adata.layers.keys() and use_smoothed:
+            title_ = ["M_ul", "M_sl"]
+            layers = ["M_ul", "M_sl", "M_uu", "M_su"]
+            layer_u, layer_s = "M_ul", "M_sl"
+        else:
+            title_ = ["X_ul", "X_sl"]
+            layers = ["X_ul", "X_sl", "X_uu", "X_su"]
+            layer_u, layer_s = "X_ul", "X_sl"
+
+        _, X_raw = prepare_data_has_splicing(
+            adata,
+            genes,
+            T,
+            layer_u=layer_u,
+            layer_s=layer_s,
+            total_layers=layers,
+        )
+    else:
+        if "M_t" in adata.layers.keys() and use_smoothed:
+            title_ = ["M_n"]
+            total_layer = "M_t"
+            layer = "M_n"
+        else:
+            title_ = ["X_new"]
+            total_layer = "X_total"
+            layer = "X_new"
+
+        _, X_raw = prepare_data_no_splicing(adata, adata.var.index, T, layer=layer, total_layer=total_layer)
+
+    for i, gene_name in enumerate(genes):
+        cur_X_data, cur_X_fit_data, cur_logLL = (
+            X_data[i],
+            X_fit_data[i],
+            logLL[i],
+        )
+
+        for j in range(sub_plot_n):
+
+            row_ind = int(np.floor(i / ncols))  # make sure unlabled and labeled are in the same column.
+
+            col_loc = (row_ind * sub_plot_n + j) * ncols * grp_len + (i % ncols - 1) * grp_len + 1
+            row_i, col_i = np.where(fig_mat == col_loc)
+            ax = plt.subplot(gs[col_loc]) if gene_order == "column" else plt.subplot(gs[fig_mat[col_i, row_i][0]])
+            if j == 0:
+                ax.text(
+                    0.65,
+                    0.80,
+                    r"$logLL={0:.2f}$".format(cur_logLL)
+                    + " \n"
+                    + r"$t_{1/2} = $"
+                    + "{0:.2f}".format(np.log(2) / gamma[i])
+                    + unit[0],
+                    ha="left",
+                    va="top",
+                    transform=ax.transAxes,
+                )
+                if show_kin_parameters:
+                    if true_param_prefix is not None:
+                        if has_splicing:
+                            ax.text(
+                                0.65,
+                                0.99,
+                                # r"$\alpha$"
+                                # + ": {0:.2f}; ".format(true_alpha[i])
+                                # + r"$\hat \alpha$"
+                                # + ": {0:.2f} \n".format(alpha[i])
+                                r"$\beta$"
+                                + ": {0:.2f}; ".format(true_beta[i])
+                                + r"$\hat \beta$"
+                                + ": {0:.2f} \n".format(beta[i])
+                                + r"$\gamma$"
+                                + ": {0:.2f}; ".format(true_gamma[i])
+                                + r"$\hat \gamma$"
+                                + ": {0:.2f} \n".format(gamma[i]),
+                                ha="left",
+                                va="top",
+                                transform=ax.transAxes,
+                            )
+                        else:
+                            ax.text(
+                                0.65,
+                                0.99,
+                                # r"$\alpha$"
+                                # + ": {0:.2f}; ".format(true_alpha[i])
+                                # + r"$\hat \alpha$"
+                                ": {0:.2f} \n".format(alpha[i])
+                                + r"$\gamma$"
+                                + ": {0:.2f}; ".format(true_gamma[i])
+                                + r"$\hat \gamma$"
+                                + ": {0:.2f} \n".format(gamma[i]),
+                                ha="left",
+                                va="top",
+                                transform=ax.transAxes,
+                            )
+                    else:
+                        if has_splicing:
+                            ax.text(
+                                0.65,
+                                0.99,
+                                # r"$\hat \alpha$"
+                                # + ": {0:.2f} \n".format(alpha[i])
+                                r"$\hat \beta$"
+                                + ": {0:.2f} \n".format(beta[i])
+                                + r"$\hat \gamma$"
+                                + ": {0:.2f} \n".format(gamma[i]),
+                                ha="left",
+                                va="top",
+                                transform=ax.transAxes,
+                            )
+                        else:
+                            ax.text(
+                                0.65,
+                                0.99,
+                                # r"$\hat \alpha$"
+                                # + ": {0:.2f} \n".format(alpha[i])
+                                r"$\hat \gamma$" + ": {0:.2f} \n".format(gamma[i]),
+                                ha="left",
+                                va="top",
+                                transform=ax.transAxes,
+                            )
+            if show_variance:
+                if has_splicing:
+                    Obs = X_raw[i][j][0].A.flatten() if issparse(X_raw[i][j][0]) else X_raw[i][j][0].flatten()
+                else:
+                    Obs = X_raw[i].A.flatten() if issparse(X_raw[i][0]) else X_raw[i].flatten()
+                ax.boxplot(
+                    x=[Obs[T == std] for std in T_uniq],
+                    positions=T_uniq,
+                    widths=boxwidth,
+                    showfliers=False,
+                    showmeans=True,
+                )
+                if has_splicing:
+                    ax.plot(T_uniq, cur_X_fit_data[j], "b")
+                    ax.plot(T_uniq, cur_X_data[j], "k--")
+                else:
+                    ax.plot(T_uniq, cur_X_fit_data.flatten(), "b")
+                    ax.plot(T_uniq, cur_X_data.flatten(), "k--")
+
+                ax.set_title(gene_name + " (" + title_[j] + ")")
+            else:
+                ax.plot(T_uniq, cur_X_fit_data.T)
+                ax.legend(title_)
+                ax.plot(T_uniq, cur_X_data.T, "k--")
+                ax.set_title(gene_name)
+
+            # properly set the xticks
+            ax.set_xticks(xticks)
+            ax.set_xticklabels(xticks_labels, rotation=30, ha="right")
+
+            if true_param_prefix is not None:
+                if has_splicing:
+                    ax.plot(t, true_p[j], "r")
+                else:
+                    ax.plot(t, true_p[j], "r")
+            ax.set_xlabel("time (" + unit + ")")
+            if y_log_scale:
+                ax.set_yscale("log")
+            if log_unnormalized:
+                ax.set_ylabel("Expression (log)")
+            else:
+                ax.set_ylabel("Expression")
+    return gs
+
+
+def plot_deg_sto(
+    adata,
+    genes,
+    has_splicing,
+    use_smoothed,
+    log_unnormalized,
+    t,
+    T,
+    T_uniq,
+    unit,
+    X_data,
+    X_fit_data,
+    logLL,
+    true_p,
+    grp_len,
+    sub_plot_n,
+    ncols,
+    boxwidth,
+    gs,
+    fig_mat,
+    gene_order,
+    y_log_scale,
+    true_param_prefix,
+    true_params,
+    est_params,
+    show_moms_fit,
+    show_variance,
+    show_kin_parameters,
+):
+    import matplotlib.pyplot as plt
+
+    true_alpha, true_beta, true_gamma = true_params
+    alpha, beta, gamma = est_params
+    if len(T_uniq) > 6:
+        xticks, xticks_labels = (
+            np.round(np.linspace(0, max(T_uniq), 6), 2),
+            np.round(np.linspace(0, max(T_uniq), 6), 2),
+        )
+    else:
+        xticks, xticks_labels = T_uniq, T_uniq
+
+    if has_splicing:
+        if "M_ul" in adata.layers.keys() and use_smoothed:
+            title_ = ["M_ul", "M_sl", "M_ul2", "M_sl2", "M_ul_sl"] if show_moms_fit else ["M_ul", "M_sl"]
+            layers = ["M_ul", "M_sl", "M_uu", "M_su"]
+            layer_u, layer_s = "M_ul", "M_sl"
+        else:
+            title_ = ["X_ul", "X_sl", "X_ul2", "X_sl2", "X_ul_sl"] if show_moms_fit else ["X_ul", "X_sl"]
+            layers = ["X_ul", "X_sl", "X_uu", "X_su"]
+            layer_u, layer_s = "X_ul", "X_sl"
+
+        _, X_raw = prepare_data_has_splicing(
+            adata,
+            genes,
+            T,
+            layer_u=layer_u,
+            layer_s=layer_s,
+            total_layers=layers,
+        )
+    else:
+        if "M_t" in adata.layers.keys() and use_smoothed:
+            title_ = ["M_n", "M_n2"] if show_moms_fit else ["M_n"]
+            total_layer = "M_t"
+            layer = "M_n"
+        else:
+            title_ = ["X_new", "X_n2"] if show_moms_fit else ["X_new"]
+            total_layer = "X_total"
+            layer = "X_new"
+
+        _, X_raw = prepare_data_no_splicing(adata, adata.var.index, T, layer=layer, total_layer=total_layer)
+
+    for i, gene_name in enumerate(genes):
+        cur_X_data, cur_X_fit_data, cur_logLL = (
+            X_data[i],
+            X_fit_data[i],
+            logLL[i],
+        )
+
+        for j in range(sub_plot_n):
+            row_ind = int(np.floor(i / ncols))  # make sure unlabled and labeled are in the same column.
+
+            col_loc = (row_ind * sub_plot_n + j) * ncols * grp_len + (i % ncols - 1) * grp_len + 1
+            row_i, col_i = np.where(fig_mat == col_loc)
+            ax = plt.subplot(gs[col_loc]) if gene_order == "column" else plt.subplot(gs[fig_mat[col_i, row_i][0]])
+            if j == 0:
+                ax.text(
+                    0.65,
+                    0.80,
+                    r"$logLL={0:.2f}$".format(cur_logLL)
+                    + " \n"
+                    + r"$t_{1/2} = $"
+                    + "{0:.2f}".format(np.log(2) / gamma[i])
+                    + unit[0],
+                    ha="left",
+                    va="top",
+                    transform=ax.transAxes,
+                )
+
+                if show_kin_parameters:
+                    if true_param_prefix is not None:
+                        if has_splicing:
+                            ax.text(
+                                0.65,
+                                0.99,
+                                # r"$\alpha$"
+                                # + ": {0:.2f}; ".format(true_alpha[i])
+                                # + r"$\hat \alpha$"
+                                # + ": {0:.2f} \n".format(alpha[i])
+                                r"$\beta$"
+                                + ": {0:.2f}; ".format(true_beta[i])
+                                + r"$\hat \beta$"
+                                + ": {0:.2f} \n".format(beta[i])
+                                + r"$\gamma$"
+                                + ": {0:.2f}; ".format(true_gamma[i])
+                                + r"$\hat \gamma$"
+                                + ": {0:.2f} \n".format(gamma[i]),
+                                ha="left",
+                                va="top",
+                                transform=ax.transAxes,
+                            )
+                        else:
+                            ax.text(
+                                0.65,
+                                0.99,
+                                # r"$\alpha$"
+                                # + ": {0:.2f}; ".format(true_alpha[i])
+                                # + r"$\hat \alpha$"
+                                ": {0:.2f} \n".format(alpha[i])
+                                + r"$\gamma$"
+                                + ": {0:.2f}; ".format(true_gamma[i])
+                                + r"$\hat \gamma$"
+                                + ": {0:.2f} \n".format(gamma[i]),
+                                ha="left",
+                                va="top",
+                                transform=ax.transAxes,
+                            )
+                    else:
+                        if has_splicing:
+                            ax.text(
+                                0.65,
+                                0.99,
+                                # r"$\hat \alpha$"
+                                # + ": {0:.2f} \n".format(alpha[i])
+                                r"$\hat \beta$"
+                                + ": {0:.2f} \n".format(beta[i])
+                                + r"$\hat \gamma$"
+                                + ": {0:.2f} \n".format(gamma[i]),
+                                ha="left",
+                                va="top",
+                                transform=ax.transAxes,
+                            )
+                        else:
+                            ax.text(
+                                0.65,
+                                0.99,
+                                # r"$\hat \alpha$"
+                                # + ": {0:.2f} \n".format(alpha[i])
+                                r"$\hat \gamma$" + ": {0:.2f} \n".format(gamma[i]),
+                                ha="left",
+                                va="top",
+                                transform=ax.transAxes,
+                            )
+            max_box_plots = 2 if has_splicing else 1
+            # if show_variance first plot box plot
+            if show_variance:
+                if j < max_box_plots:
+                    if has_splicing:
+                        Obs = X_raw[i][j][0].A.flatten() if issparse(X_raw[i][j][0]) else X_raw[i][j][0].flatten()
+                    else:
+                        Obs = X_raw[i].A.flatten() if issparse(X_raw[i][0]) else X_raw[i].flatten()
+
+                    ax.boxplot(
+                        x=[Obs[T == std] for std in T_uniq],
+                        positions=T_uniq,
+                        widths=boxwidth,
+                        showfliers=False,
+                        showmeans=True,
+                    )
+                    ax.plot(T_uniq, cur_X_fit_data[j].T, "b")
+                    ax.plot(T_uniq, cur_X_data[j], "k--")
+                    ax.set_title(gene_name + " (" + title_[j] + ")")
+            # if not show_variance then first plot line plot
+            else:
+                if j == 0:
+                    if has_splicing:
+                        ax.plot(T_uniq, cur_X_fit_data[[0, 1]].T)
+                        ax.legend(title_[:2])
+                        ax.plot(T_uniq, cur_X_data[[0, 1]].T, "k--")
+                    else:
+                        ax.plot(T_uniq, cur_X_fit_data[j].T)
+                        ax.legend(labels=[title_[j]])
+                        ax.plot(T_uniq, cur_X_data[j].T, "k--")
+                    ax.set_title(gene_name)
+            # other subplots
+            if not ((show_variance and j < max_box_plots) or (not show_variance and j == 0)):
+                ax.plot(T_uniq, cur_X_fit_data[j].T)
+                ax.plot(T_uniq, cur_X_data[j], "k--")
+                if show_variance:
+                    ax.legend([title_[j]])
+                else:
+                    if has_splicing:
+                        ax.legend([title_[j + 1]])
+                    else:
+                        ax.legend([title_[j]])
+
+                ax.set_title(gene_name)
+
+            # properly set the xticks
+            ax.set_xticks(xticks)
+            ax.set_xticklabels(xticks_labels, rotation=30, ha="right")
+
+            if true_param_prefix is not None:
+                ax.plot(t, true_p[j], "r")
+            ax.set_xlabel("time (" + unit + ")")
+            if y_log_scale:
+                ax.set_yscale("log")
+            if log_unnormalized:
+                ax.set_ylabel("Expression (log)")
+            else:
+                ax.set_ylabel("Expression")
+
+    return gs
+
+
+def plot_kin_twostep(
+    adata,
+    genes,
+    has_splicing,
+    use_smoothed,
+    t,
+    T,
+    T_uniq,
+    unit,
+    X_data,
+    X_fit_data,
+    logLL,
+    grp_len,
+    sub_plot_n,
+    ncols,
+    gs,
+    fig_mat,
+    gene_order,
+    true_param_prefix,
+    true_params,
+    est_params,
+    show_kin_parameters,
+):
+    import matplotlib.pyplot as plt
+
+    true_alpha, true_beta, true_gamma = true_params
+    alpha, beta, gamma = est_params
+    mapper = get_mapper()
+    if len(T_uniq) > 6:
+        xticks, xticks_labels = (
+            np.round(np.linspace(0, max(T_uniq), 6), 2),
+            np.round(np.linspace(0, max(T_uniq), 6), 2),
+        )
+    else:
+        xticks, xticks_labels = T_uniq, T_uniq
+
+    unique_labels = np.unique(T_uniq)
+    color_key = _to_hex(plt.get_cmap("viridis")(np.linspace(0, 1, len(unique_labels))))
+
+    new_color_key = {k: color_key[i] for i, k in enumerate(unique_labels)}
+
+    colors = pd.Series(T).map(new_color_key).values
+
+    vel_params_df = get_vel_params(adata)
+    r2 = vel_params_df.loc[genes, "gamma_r2"]
+    mean_R2 = vel_params_df.loc[genes, "mean_R2"]
+
+    for i, gene_name in enumerate(genes):
+        cur_X_data, cur_X_fit_data, cur_logLL = (
+            X_data[i],
+            X_fit_data[i],
+            logLL[i],
+        )
+        r = adata[:, gene_name].layers[mapper["X_total"]] if use_smoothed else adata[:, gene_name].layers["X_total"]
+        n = adata[:, gene_name].layers[mapper["X_new"]] if use_smoothed else adata[:, gene_name].layers["X_new"]
+        r = r.A.flatten() if issparse(r) else r.flatten()
+        n = n.A.flatten() if issparse(n) else n.flatten()
+
+        for j in range(sub_plot_n):
+            row_ind = int(np.floor(i / ncols))  # make sure unlabled and labeled are in the same column.
+
+            col_loc = (row_ind * sub_plot_n + j) * ncols * grp_len + (i % ncols - 1) * grp_len + 1
+            row_i, col_i = np.where(fig_mat == col_loc)
+            ax = plt.subplot(gs[col_loc]) if gene_order == "column" else plt.subplot(gs[fig_mat[col_i, row_i][0]])
+            if j == 0:
+                if cur_logLL is not None:
+                    ax.text(
+                        0.05,
+                        0.99,
+                        r"$logLL={0:.2f}$".format(cur_logLL)
+                        + " \n"
+                        + r"$t_{1/2} = $"
+                        + "{0:.2f}".format(np.log(2) / gamma[i])
+                        + unit[0],
+                        ha="left",
+                        va="top",
+                        transform=ax.transAxes,
+                    )
+
+                ax.scatter(r, n, c=colors, alpha=0.25, ec=None)
+                legend_elements = [
+                    # Patch(facecolor=color_key[i], label=k)
+                    Line2D(
+                        [0],
+                        [0],
+                        marker="o",
+                        color=color_key[ind],
+                        label=k,
+                        linestyle="None",
+                    )
+                    for ind, k in enumerate(T_uniq)
+                ]
+                ax.legend(
+                    handles=legend_elements,
+                    bbox_to_anchor=(0.9, 1),
+                    loc="upper left",
+                    ncol=len(T_uniq) // 15 + 1,
+                )
+                xnew = np.linspace(np.min(r), np.max(r) * 0.80)
+                for ind in range(len(cur_X_data)):
+                    ax.plot(
+                        xnew,
+                        xnew * cur_X_data[ind],
+                        dashes=[6, 2],
+                        lw=4,
+                        c=new_color_key[T_uniq[ind]],
+                    )
+                if use_smoothed:
+                    ax.set_xlabel("total (1st moment)")
+                    ax.set_ylabel("new (1st moment)")
+                else:
+                    ax.set_xlabel("total (size factor normalized only)")
+                    ax.set_ylabel("new (size factor normalized only)")
+
+                ax.set_title(gene_name)
+                ax.text(
+                    0.05,
+                    0.6,
+                    "<r2> = %.4f" % (mean_R2[i]),
+                    ha="left",
+                    va="center",
+                    transform=ax.transAxes,
+                )
+            elif j == 1:
+                # y-axis should be -np.log(1 - cur_X_data)
+                ax.scatter(T_uniq, -np.log(1 - cur_X_data), c=color_key)
+                ax.scatter(T_uniq, cur_X_fit_data, c="r")
+                ax.plot(
+                    T_uniq,
+                    cur_X_fit_data,
+                    dashes=[6, 2],
+                    c="k",
+                )
+                ax.set_xlabel("Time (" + unit + ")")
+                ax.set_ylabel("-log(1-k)")
+                ax.text(
+                    0.05,
+                    0.6,
+                    "r2 = %.4f" % (r2[i]),
+                    ha="left",
+                    va="center",
+                    transform=ax.transAxes,
+                )
+
+                if show_kin_parameters:
+                    if true_param_prefix is not None:
+                        if has_splicing:
+                            ax.text(
+                                0.05,
+                                0.99,
+                                r"$\alpha$"
+                                + ": {0:.2f}; ".format(true_alpha[i])
+                                + r"$\hat \alpha$"
+                                + ": {0:.2f} \n".format(alpha[i])
+                                + r"$\beta$"
+                                + ": {0:.2f}; ".format(true_beta[i])
+                                + r"$\hat \beta$"
+                                + ": {0:.2f} \n".format(beta[i])
+                                + r"$\gamma$"
+                                + ": {0:.2f}; ".format(true_gamma[i])
+                                + r"$\hat \gamma$"
+                                + ": {0:.2f} \n".format(gamma[i]),
+                                ha="left",
+                                va="top",
+                                transform=ax.transAxes,
+                            )
+                        else:
+                            ax.text(
+                                0.05,
+                                0.99,
+                                r"$\alpha$"
+                                + ": {0:.2f}; ".format(true_alpha[i])
+                                + r"$\hat \alpha$"
+                                + ": {0:.2f} \n".format(alpha[i])
+                                + r"$\gamma$"
+                                + ": {0:.2f}; ".format(true_gamma[i])
+                                + r"$\hat \gamma$"
+                                + ": {0:.2f} \n".format(gamma[i]),
+                                ha="left",
+                                va="top",
+                                transform=ax.transAxes,
+                            )
+                    else:
+                        if has_splicing:
+                            ax.text(
+                                0.05,
+                                0.99,
+                                r"$\hat \alpha$"
+                                + ": {0:.2f} \n".format(alpha[i])
+                                + r"$\hat \beta$"
+                                + ": {0:.2f} \n".format(beta[i])
+                                + r"$\hat \gamma$"
+                                + ": {0:.2f} \n".format(gamma[i]),
+                                ha="left",
+                                va="top",
+                                transform=ax.transAxes,
+                            )
+                        else:
+                            ax.text(
+                                0.05,
+                                0.99,
+                                r"$\hat \alpha$"
+                                + ": {0:.2f} \n".format(alpha[i])
+                                + r"$\hat \gamma$"
+                                + ": {0:.2f} \n".format(gamma[i]),
+                                ha="left",
+                                va="top",
+                                transform=ax.transAxes,
+                            )
+
+                # properly set the xticks
+                ax.set_xticks(xticks)
+                ax.set_xticklabels(xticks_labels, rotation=30, ha="right")
+
+    return gs
+
+
+def plot_kin_deg_twostep(
+    adata,
+    genes,
+    has_splicing,
+    use_smoothed,
+    log_unnormalized,
+    T,
+    T_uniq,
+    unit,
+    X_data,
+    X_fit_data,
+    logLL,
+    grp_len,
+    sub_plot_n,
+    ncols,
+    boxwidth,
+    gs,
+    fig_mat,
+    gene_order,
+    y_log_scale,
+    true_param_prefix,
+    true_params,
+    est_params,
+    show_variance,
+    show_kin_parameters,
+):
+    import matplotlib.pyplot as plt
+
+    true_alpha, true_beta, true_gamma = true_params
+    alpha, beta, gamma = est_params
+    if len(T_uniq) > 6:
+        xticks, xticks_labels = (
+            np.round(np.linspace(0, max(T_uniq), 6), 2),
+            np.round(np.linspace(0, max(T_uniq), 6), 2),
+        )
+    else:
+        xticks, xticks_labels = T_uniq, T_uniq
+
+    layer = "M_n" if ("M_n" in adata.layers.keys() and use_smoothed) else "X_new"
+    total_layer = "M_t" if ("M_t" in adata.layers.keys() and use_smoothed) else "X_total"
+    _, X_raw = prepare_data_no_splicing(adata, adata.var.index, T, layer=layer, total_layer=total_layer)
+
+    for i, gene_name in enumerate(genes):
+        cur_X_data, cur_logLL = X_data[i], logLL[i]
+        cur_X_fit_data, cur_tt, cur_h = (
+            X_fit_data[i][0],
+            X_fit_data[i][1][0],
+            X_fit_data[i][1][1],
+        )
+
+        Obs = X_raw[i].A.flatten() if issparse(X_raw[i][0]) else X_raw[i].flatten()
+        for j in range(sub_plot_n):
+            row_ind = int(np.floor(i / ncols))  # make sure unlabled and labeled are in the same column.
+
+            col_loc = (row_ind * sub_plot_n + j) * ncols * grp_len + (i % ncols - 1) * grp_len + 1
+            row_i, col_i = np.where(fig_mat == col_loc)
+            ax = plt.subplot(gs[col_loc]) if gene_order == "column" else plt.subplot(gs[fig_mat[col_i, row_i][0]])
+
+            if j == 0:
+                ax.text(
+                    0.9,
+                    0.99,
+                    r"$logLL={0:.2f}$".format(cur_logLL)
+                    + " \n"
+                    + r"$t_{1/2} = $"
+                    + "{0:.2f}".format(np.log(2) / gamma[i])
+                    + unit[0],
+                    ha="left",
+                    va="top",
+                    transform=ax.transAxes,
+                )
+
+                if show_variance:
+                    ax.boxplot(
+                        x=[Obs[T == std] for std in T_uniq],
+                        positions=T_uniq,
+                        widths=boxwidth,
+                        showfliers=False,
+                        showmeans=True,
+                    )
+                    ax.plot(T_uniq, cur_X_fit_data, "b")  # ax.plot(T_uniq, cur_X_fit_data[j].T, "b")
+                    ax.plot(T_uniq, cur_X_data, "k--")  # ax.plot(T_uniq, cur_X_data[j], "k--")
+                    ax.set_ylabel("labeled")
+                    ax.set_title(gene_name + str(cur_logLL))
+                else:
+                    ax.plot(T_uniq, cur_X_fit_data.T, "b")
+                    ax.plot(T_uniq, cur_X_data, "k--")
+                    ax.set_ylabel("labeled")
+                    ax.set_title(gene_name + str(cur_logLL))
+            elif j == 1:
+                ax.plot(cur_tt, cur_h, "b")
+                ax.plot(cur_tt, cur_h, "r*")
+                ax.set_ylabel("labeled")
+                ax.legend(["model (deterministic)", "model (kinetic chase)"])
+                ax.set_title("unseen initial conc.")
+
+                # properly set the xticks
+                ax.set_xticks(xticks)
+                ax.set_xticklabels(xticks_labels, rotation=30, ha="right")
+
+                if show_kin_parameters:
+                    if true_param_prefix is not None:
+                        if has_splicing:
+                            ax.text(
+                                0.80,
+                                0.6,
+                                r"$\alpha$"
+                                + ": {0:.2f}; ".format(true_alpha[i])
+                                + r"$\hat \alpha$"
+                                + ": {0:.2f} \n".format(alpha[i])
+                                + r"$\beta$"
+                                + ": {0:.2f}; ".format(true_beta[i])
+                                + r"$\hat \beta$"
+                                + ": {0:.2f} \n".format(beta[i])
+                                + r"$\gamma$"
+                                + ": {0:.2f}; ".format(true_gamma[i])
+                                + r"$\hat \gamma$"
+                                + ": {0:.2f} \n".format(gamma[i]),
+                                ha="left",
+                                va="top",
+                                transform=ax.transAxes,
+                            )
+                        else:
+                            ax.text(
+                                0.80,
+                                0.6,
+                                r"$\alpha$"
+                                + ": {0:.2f}; ".format(true_alpha[i])
+                                + r"$\hat \alpha$"
+                                + ": {0:.2f} \n".format(alpha[i])
+                                + r"$\gamma$"
+                                + ": {0:.2f}; ".format(true_gamma[i])
+                                + r"$\hat \gamma$"
+                                + ": {0:.2f} \n".format(gamma[i]),
+                                ha="left",
+                                va="top",
+                                transform=ax.transAxes,
+                            )
+
+        if use_smoothed:
+            ax.set_ylabel("labeled (1st moment)")
+        else:
+            ax.set_ylabel("labeled (size factor normalized only)")
+
+        ax.set_xlabel("time (" + unit + ")")
+        if y_log_scale:
+            ax.set_yscale("log")
+        if log_unnormalized:
+            ax.set_ylabel("Expression (log)")
+        else:
+            ax.set_ylabel("Expression")
+
+    return gs

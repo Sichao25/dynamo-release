@@ -16,6 +16,59 @@ from .scatters import scatters
 from .utils import map2color, save_show_ret
 
 
+def fate(
+    adata: AnnData,
+    x: int = 0,
+    y: int = 1,
+    basis: str = "pca",
+    color: str = "ntr",
+    ax: Optional[Axes] = None,
+    save_show_or_return: Literal["save", "show", "return"] = "show",
+    save_kwargs: Dict[str, Any] = {},
+    **kwargs
+) -> Optional[Axes]:
+    """Draw the predicted integration paths on the low-dimensional embedding.
+
+    Args:
+        adata: an Annodata object.
+        x: the column index of the low dimensional embedding for the x-axis. Defaults to 0.
+        y: the column index of the low dimensional embedding for the y-axis. Defaults to 1.
+        basis: the basis used for dimension reduction. Defaults to "pca".
+        color: any column names or gene expression, etc. that will be used for coloring cells. Defaults to "ntr".
+        ax: the matplotlib axes object where new plots will be added to. Only applicable to drawing a single component.
+            If None, new axis would be created. Defaults to None.
+        save_show_or_return: whether to save, show or return the figure. Defaults to "show".
+        save_kwargs: a dictionary that will be passed to the save_show_ret function. By default, it is an empty dictionary
+            and the save_show_ret function will use the
+                {
+                    "path": None,
+                    "prefix": 'phase_portraits',
+                    "dpi": None,
+                    "ext": 'pdf',
+                    "transparent": True,
+                    "close": True,
+                    "verbose": True
+                }
+            as its parameters. Otherwise, you can provide a dictionary that properly modify those keys according to
+            your needs. Defaults to {}.
+        **kwargs: any other kwargs to be passed to `dynamo.pl.scatters`.
+    Returns:
+        None would be returned by default. If `save_show_or_return` is set to be `return`, the matplotlib axis of the
+        plot would be returned.
+    """
+
+    ax = scatters(adata, basis=basis, color=color, save_show_or_return="return", ax=ax, **kwargs)
+
+    fate_key = "fate" if basis is None else "fate_" + basis
+    lap_dict = adata.uns[fate_key]
+
+    for i, j in zip(lap_dict["prediction"], lap_dict["t"]):
+        ax.scatter(*i.T[:, [x, y]].T, c=map2color(j))
+        ax.plot(*i.T[:, [x, y]].T, c="k")
+
+    return save_show_ret("kinetic_curves", save_show_or_return, save_kwargs, ax)
+
+
 def fate_bias(
     adata: AnnData,
     group: str,
@@ -76,56 +129,3 @@ def fate_bias(
     )
 
     return save_show_ret("fate_bias", save_show_or_return, save_kwargs, ax)
-
-
-def fate(
-    adata: AnnData,
-    x: int = 0,
-    y: int = 1,
-    basis: str = "pca",
-    color: str = "ntr",
-    ax: Optional[Axes] = None,
-    save_show_or_return: Literal["save", "show", "return"] = "show",
-    save_kwargs: Dict[str, Any] = {},
-    **kwargs
-) -> Optional[Axes]:
-    """Draw the predicted integration paths on the low-dimensional embedding.
-
-    Args:
-        adata: an Annodata object.
-        x: the column index of the low dimensional embedding for the x-axis. Defaults to 0.
-        y: the column index of the low dimensional embedding for the y-axis. Defaults to 1.
-        basis: the basis used for dimension reduction. Defaults to "pca".
-        color: any column names or gene expression, etc. that will be used for coloring cells. Defaults to "ntr".
-        ax: the matplotlib axes object where new plots will be added to. Only applicable to drawing a single component.
-            If None, new axis would be created. Defaults to None.
-        save_show_or_return: whether to save, show or return the figure. Defaults to "show".
-        save_kwargs: a dictionary that will be passed to the save_show_ret function. By default, it is an empty dictionary
-            and the save_show_ret function will use the
-                {
-                    "path": None,
-                    "prefix": 'phase_portraits',
-                    "dpi": None,
-                    "ext": 'pdf',
-                    "transparent": True,
-                    "close": True,
-                    "verbose": True
-                }
-            as its parameters. Otherwise, you can provide a dictionary that properly modify those keys according to
-            your needs. Defaults to {}.
-        **kwargs: any other kwargs to be passed to `dynamo.pl.scatters`.
-    Returns:
-        None would be returned by default. If `save_show_or_return` is set to be `return`, the matplotlib axis of the
-        plot would be returned.
-    """
-
-    ax = scatters(adata, basis=basis, color=color, save_show_or_return="return", ax=ax, **kwargs)
-
-    fate_key = "fate" if basis is None else "fate_" + basis
-    lap_dict = adata.uns[fate_key]
-
-    for i, j in zip(lap_dict["prediction"], lap_dict["t"]):
-        ax.scatter(*i.T[:, [x, y]].T, c=map2color(j))
-        ax.plot(*i.T[:, [x, y]].T, c="k")
-
-    return save_show_ret("kinetic_curves", save_show_or_return, save_kwargs, ax)

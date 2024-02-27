@@ -41,718 +41,6 @@ from .utils import (
 )
 
 
-def plot_flow_field(
-    vecfld: Topography2D,
-    x_range: npt.ArrayLike,
-    y_range: npt.ArrayLike,
-    n_grid: int = 100,
-    start_points: Optional[np.ndarray] = None,
-    integration_direction: Literal["forward", "backward", "both"] = "both",
-    background: Optional[str] = None,
-    density: float = 1,
-    linewidth: float = 1,
-    streamline_color: Optional[str] = None,
-    streamline_alpha: float = 0.4,
-    color_start_points: Optional[float] = None,
-    save_show_or_return: Literal["save", "show", "return"] = "return",
-    save_kwargs: Dict[str, Any] = {},
-    ax: Optional[Axes] = None,
-    **streamline_kwargs,
-) -> Optional[Axes]:
-    """Plots the flow field with line thickness proportional to speed.
-
-    Code adapted from: http://be150.caltech.edu/2017/handouts/dynamical_systems_approaches.html
-
-    Args:
-        vecfld: an instance of the vector_field class.
-        x_range: the range of values for x-axis.
-        y_range: the range of values for y-axis.
-        n_grid: the number of grid points to use in computing derivatives on phase portrait. Defaults to 100.
-        start_points: the initial points from which the streamline will be drawn. Defaults to None.
-        integration_direction: integrate the streamline in forward, backward or both directions. default is 'both'.
-            Defaults to "both".
-        background: the background color of the plot. Defaults to None.
-        density: the density of the plt.streamplot function. Defaults to 1.
-        linewidth: the multiplier of automatically calculated linewidth passed to the plt.streamplot function. Defaults
-            to 1.
-        streamline_color: the color of the vector field streamlines. Defaults to None.
-        streamline_alpha: the alpha value applied to the vector field streamlines. Defaults to 0.4.
-        color_start_points: the color of the starting point that will be used to predict cell fates. Defaults to None.
-        save_show_or_return: whether to save, show or return the figure. Defaults to "return".
-        save_kwargs: a dictionary that will be passed to the save_show_ret function. By default, it is an empty dictionary
-            and the save_show_ret function will use the {"path": None, "prefix": 'plot_flow_field', "dpi": None,
-            "ext": 'pdf', "transparent": True, "close": True, "verbose": True} as its parameters. Otherwise, you can
-            provide a dictionary that properly modify those keys according to your needs. Defaults to {}.
-        ax: the Axis on which to make the plot. Defaults to None.
-
-    Returns:
-        None would be returned by default. If `save_show_or_return` is set to be 'return', the Axes of the generated
-        figure would be returned.
-    """
-
-    from matplotlib import patches, rcParams
-    from matplotlib.colors import to_hex
-
-    if background is None:
-        _background = rcParams.get("figure.facecolor")
-        _background = to_hex(_background) if type(_background) is tuple else _background
-    else:
-        _background = background
-
-    if _background in ["#ffffff", "black"]:
-        color, color_start_points = (
-            "white" if streamline_color is None else streamline_color,
-            "red" if color_start_points is None else color_start_points,
-        )
-    else:
-        color, color_start_points = (
-            "black" if streamline_color is None else streamline_color,
-            "red" if color_start_points is None else color_start_points,
-        )
-
-    # Set up u,v space
-    u = np.linspace(x_range[0], x_range[1], n_grid)
-    v = np.linspace(y_range[0], y_range[1], n_grid)
-    uu, vv = np.meshgrid(u, v)
-
-    # Compute derivatives
-    u_vel = np.empty_like(uu)
-    v_vel = np.empty_like(vv)
-    for i in range(uu.shape[0]):
-        for j in range(uu.shape[1]):
-            u_vel[i, j], v_vel[i, j] = vecfld(np.array([uu[i, j], vv[i, j]]))
-
-    # Compute speed
-    speed = np.sqrt(u_vel**2 + v_vel**2)
-
-    # Make linewidths proportional to speed,
-    # with minimal line width of 0.5 and max of 3
-    # lw = lw_min + (lw_max - lw_min) * speed / speed.max()
-
-    streamplot_kwargs = {
-        "density": density * 2,
-        "linewidth": None,
-        "cmap": None,
-        "norm": None,
-        "arrowsize": 1,
-        "arrowstyle": "fancy",
-        "minlength": 0.1,
-        "transform": None,
-        "maxlength": 4.0,
-        "zorder": 3,
-    }
-    linewidth *= 2 * speed / speed[~np.isnan(speed)].max()
-    streamplot_kwargs.update({"linewidth": linewidth})
-
-    streamplot_kwargs = update_dict(streamplot_kwargs, streamline_kwargs)
-
-    # Make stream plot
-    if ax is None:
-        ax = plt.gca()
-    if start_points is None:
-        s = ax.streamplot(
-            uu,
-            vv,
-            u_vel,
-            v_vel,
-            color=color,
-            **streamplot_kwargs,
-        )
-        set_arrow_alpha(ax, streamline_alpha)
-        set_stream_line_alpha(s, streamline_alpha)
-    else:
-        if len(start_points.shape) == 1:
-            start_points.reshape((1, 2))
-        ax.scatter(*start_points, marker="*", zorder=4)
-
-        s = ax.streamplot(
-            uu,
-            vv,
-            u_vel,
-            v_vel,
-            start_points=start_points,
-            integration_direction=integration_direction,
-            color=color_start_points,
-            **streamplot_kwargs,
-        )
-        set_arrow_alpha(ax, streamline_alpha)
-        set_stream_line_alpha(s, streamline_alpha)
-
-    return save_show_ret("plot_flow_field", save_show_or_return, save_kwargs, ax)
-
-
-def plot_nullclines(
-    vecfld: Topography2D,
-    vecfld_dict: Dict[str, Any] = None,
-    lw: float = 3,
-    background: Optional[float] = None,
-    save_show_or_return: Literal["save", "show", "return"] = "return",
-    save_kwargs: Dict[str, Any] = {},
-    ax: Optional[Axes] = None,
-) -> Optional[Axes]:
-    """Plot nullclines stored in the VectorField2D class.
-
-    Args:
-        vecfld: an instance of the VectorField2D class which presumably has fixed points computed and stored.
-        vecfld_dict: a dict with entries to create a `VectorField2D` instance. Defaults to None.
-        lw: the linewidth of the nullcline. Defaults to 3.
-        background: the background color of the plot. Defaults to None.
-        save_show_or_return: whether to save, show, or return the figure. Defaults to "return".
-        save_kwargs: a dictionary that will be passed to the save_show_ret function. By default, it is an empty dictionary
-            and the save_show_ret function will use the {"path": None, "prefix": 'plot_nullclines', "dpi": None,
-            "ext": 'pdf', "transparent": True, "close": True, "verbose": True} as its parameters. Otherwise, you can
-            provide a dictionary that properly modify those keys according to your needs. Defaults to {}.
-        ax: the matplotlib axes used for plotting. Default is to use the current axis. Defaults to None.
-
-    Returns:
-        None would be returned by default. If `save_show_or_return` is set to be 'return', the Axes of the generated
-        figure would be returned.
-    """
-
-    from matplotlib import rcParams
-    from matplotlib.colors import to_hex
-
-    if background is None:
-        _background = rcParams.get("figure.facecolor")
-        _background = to_hex(_background) if type(_background) is tuple else _background
-    else:
-        _background = background
-
-    if _background in ["#ffffff", "black"]:
-        colors = ["#189e1a", "#1f77b4"]
-    else:
-        colors = ["#189e1a", "#1f77b4"]
-
-    NCx, NCy = None, None
-
-    # if nullcline is not previously calculated, calculate and plot them
-    if vecfld_dict is None or "NCx" not in vecfld_dict.keys() or "NCy" not in vecfld_dict.keys():
-        if vecfld_dict is not None:
-            X_basis = vecfld_dict["X"][:, :2]
-            min_, max_ = X_basis.min(0), X_basis.max(0)
-
-            xlim = [
-                min_[0] - (max_[0] - min_[0]) * 0.1,
-                max_[0] + (max_[0] - min_[0]) * 0.1,
-            ]
-            ylim = [
-                min_[1] - (max_[1] - min_[1]) * 0.1,
-                max_[1] + (max_[1] - min_[1]) * 0.1,
-            ]
-
-            vecfld2d = Topography2D(vecfld, X_data=vecfld_dict["X"])
-            vecfld2d.find_fixed_points_by_sampling(25, xlim, ylim)
-
-            if vecfld2d.get_num_fixed_points() > 0:
-                vecfld2d.compute_nullclines(xlim, ylim, find_new_fixed_points=True)
-
-                NCx, NCy = vecfld2d.NCx, vecfld.NCy
-    else:
-        NCx, NCy = (
-            [vecfld_dict["NCx"][index] for index in vecfld_dict["NCx"]],
-            [vecfld_dict["NCy"][index] for index in vecfld_dict["NCy"]],
-        )
-
-    if ax is None:
-        ax = plt.gca()
-
-    if NCx is not None and NCy is not None:
-        for ncx in NCx:
-            ax.plot(*ncx.T, c=colors[0], lw=lw)
-        for ncy in NCy:
-            ax.plot(*ncy.T, c=colors[1], lw=lw)
-
-    return save_show_ret("plot_nullclines", save_show_or_return, save_kwargs, ax)
-
-
-def plot_fixed_points_2d(
-    vecfld: Topography2D,
-    marker: str = "o",
-    markersize: float = 200,
-    cmap: Optional[str] = None,
-    filltype: List[str] = ["full", "top", "none"],
-    background: Optional[str] = None,
-    save_show_or_return: Literal["save", "show", "return"] = "return",
-    save_kwargs: Dict[str, Any] = {},
-    ax: Optional[Axes] = None,
-) -> Optional[Axes]:
-    """Plot fixed points stored in the VectorField2D class.
-
-    Args:
-        vecfld: an instance of the VectorField2D class which presumably has fixed points computed and stored.
-        marker: the marker type. Any string supported by matplotlib.markers. Defaults to "o".
-        markersize: the size of the marker. Defaults to 200.
-        cmap: the name of a matplotlib colormap to use for coloring or shading the confidence of fixed points. If None,
-            the default color map will set to be viridis (inferno) when the background is white (black). Defaults to
-            None.
-        filltype: the fill type used for stable, saddle, and unstable fixed points. Default is 'full', 'top' and 'none',
-            respectively. Defaults to ["full", "top", "none"].
-        background: the background color of the plot. Defaults to None.
-        save_show_or_return: whether to save, show or return the figure. Defaults to "return".
-        save_kwargs: a dictionary that will be passed to the save_show_ret function. By default, it is an empty dictionary
-            and the save_show_ret function will use the {"path": None, "prefix": 'plot_fixed_points', "dpi": None,
-            "ext": 'pdf', "transparent": True, "close": True, "verbose": True} as its parameters. Otherwise, you can
-            provide a dictionary that properly modify those keys according to your needs. Defaults to {}.
-        ax: the matplotlib axes used for plotting. Default is to use the current axis. Defaults to None.
-
-    Returns:
-        None would be returned by default. If `save_show_or_return` is set to be 'return', the Axes of the generated
-        figure would be returned.
-    """
-
-    import matplotlib
-    import matplotlib.patheffects as PathEffects
-    from matplotlib import markers, rcParams
-    from matplotlib.colors import to_hex
-
-    if background is None:
-        _background = rcParams.get("figure.facecolor")
-        _background = to_hex(_background) if type(_background) is tuple else _background
-    else:
-        _background = background
-
-    if _background in ["#ffffff", "black"]:
-        _theme_ = "inferno"
-    else:
-        _theme_ = "viridis"
-    _cmap = _themes[_theme_]["cmap"] if cmap is None else cmap
-
-    Xss, ftype = vecfld.get_fixed_points(get_types=True)
-    confidence = vecfld.get_Xss_confidence()
-
-    if ax is None:
-        ax = plt.gca()
-
-    cm = matplotlib.cm.get_cmap(_cmap) if type(_cmap) is str else _cmap
-    for i in range(len(Xss)):
-        cur_ftype = ftype[i]
-        marker_ = markers.MarkerStyle(marker=marker, fillstyle=filltype[int(cur_ftype + 1)])
-        ax.scatter(
-            *Xss[i],
-            marker=marker_,
-            s=markersize,
-            c=np.array(cm(confidence[i])).reshape(1, -1),
-            edgecolor=_select_font_color(_background),
-            linewidths=1,
-            cmap=_cmap,
-            vmin=0,
-            zorder=5,
-        )
-        txt = ax.text(
-            *Xss[i],
-            repr(i),
-            c=("black" if cur_ftype == -1 else "blue" if cur_ftype == 0 else "red"),
-            horizontalalignment="center",
-            verticalalignment="center",
-            zorder=6,
-            weight="bold",
-        )
-        txt.set_path_effects(
-            [
-                PathEffects.Stroke(linewidth=1.5, foreground=_background, alpha=0.8),
-                PathEffects.Normal(),
-            ]
-        )
-
-    return save_show_ret("plot_fixed_points", save_show_or_return, save_kwargs, ax)
-
-
-def plot_fixed_points(
-    vecfld: Topography2D,
-    vecfld_dict: Dict[str, Any] = None,
-    marker: str = "o",
-    markersize: int = 200,
-    c: str = "w",
-    cmap: Optional[str] = None,
-    filltype: List[str] = ["full", "top", "none"],
-    background: Optional[str] = None,
-    save_show_or_return: Literal["save", "show", "return"] = "return",
-    save_kwargs: Dict[str, Any] = {},
-    plot_method: Literal["pv", "matplotlib"] = "matplotlib",
-    ax: Optional[Axes] = None,
-    **kwargs,
-) -> Optional[Axes]:
-    """Plot fixed points stored in the VectorField class.
-
-    Args:
-        vecfld: an instance of the vector_field class.
-        vecfld_dict: a dict with entries to create a `VectorField2D` instance. Defaults to None.
-        marker: the marker type. Any string supported by matplotlib.markers. Defaults to "o".
-        markersize: the size of the marker. Defaults to 200.
-        c: the marker colors. Defaults to "w".
-        cmap: the name of a matplotlib colormap to use for coloring or shading the confidence of fixed points. If None,
-            the default color map will set to be viridis (inferno) when the background is white (black). Defaults to
-            None.
-        filltype: the fill type used for stable, saddle, and unstable fixed points. Default is 'full', 'top' and 'none',
-            respectively. Defaults to ["full", "top", "none"].
-        background: the background color of the plot. Defaults to None.
-        save_show_or_return: whether to save, show or return the figure. Defaults to "return".
-        save_kwargs: a dictionary that will be passed to the save_show_ret function. By default, it is an empty dictionary
-            and the save_show_ret function will use the {"path": None, "prefix": 'plot_fixed_points', "dpi": None,
-            "ext": 'pdf', "transparent": True, "close": True, "verbose": True} as its parameters. Otherwise, you can
-            provide a dictionary that properly modify those keys according to your needs. Defaults to {}.
-        plot_method: the method to plot 3D points. Options include `pv` (pyvista) and `matplotlib`.
-        ax: the matplotlib axes or pyvista plotter used for plotting. Default is to use the current axis. Defaults to
-            None.
-
-    Returns:
-        None would be returned by default. If `save_show_or_return` is set to be 'return', the Axes of the generated
-        figure would be returned.
-    """
-
-    import matplotlib
-    import matplotlib.patheffects as PathEffects
-    from matplotlib import markers, rcParams
-    from matplotlib.colors import to_hex
-
-    if background is None:
-        _background = rcParams.get("figure.facecolor")
-        _background = to_hex(_background) if type(_background) is tuple else _background
-    else:
-        _background = background
-
-    if _background in ["#ffffff", "black"]:
-        _theme_ = "inferno"
-    else:
-        _theme_ = "viridis"
-    _cmap = _themes[_theme_]["cmap"] if cmap is None else cmap
-
-    if vecfld_dict is None or any(("Xss" not in vecfld_dict.keys(), "ftype" not in vecfld_dict.keys())):
-        if vecfld_dict is not None:
-            if vecfld_dict["X"].shape[1] == 2:
-                min_, max_ = vecfld_dict["X"].min(0), vecfld_dict["X"].max(0)
-
-                xlim = [
-                    min_[0] - (max_[0] - min_[0]) * 0.1,
-                    max_[0] + (max_[0] - min_[0]) * 0.1,
-                ]
-                ylim = [
-                    min_[1] - (max_[1] - min_[1]) * 0.1,
-                    max_[1] + (max_[1] - min_[1]) * 0.1,
-                ]
-
-                vecfld = Topography2D(vecfld, X_data=vecfld_dict["X"])
-                vecfld.find_fixed_points_by_sampling(25, xlim, ylim)
-                if vecfld.get_num_fixed_points() > 0:
-                    vecfld.compute_nullclines(xlim, ylim, find_new_fixed_points=True)
-
-                Xss, ftype = vecfld.get_fixed_points(get_types=True)
-                confidence = vecfld.get_Xss_confidence()
-            else:
-                confidence = None
-                vecfld = BaseVectorField(
-                    X=vecfld_dict["X"][vecfld_dict["valid_ind"], :],
-                    V=vecfld_dict["Y"][vecfld_dict["valid_ind"], :],
-                    func=vecfld,
-                )
-
-                Xss, ftype = vecfld.get_fixed_points(**kwargs)
-                if Xss.ndim > 1 and Xss.shape[1] > 2:
-                    fp_ind = nearest_neighbors(Xss, vecfld.data["X"], 1).flatten()
-                    # need to use "X_basis" to plot on the scatter point space
-                    Xss = vecfld_dict["X_basis"][fp_ind]
-
-    else:
-        Xss, ftype, confidence = (
-            vecfld_dict["Xss"],
-            vecfld_dict["ftype"],
-            vecfld_dict["confidence"],
-        )
-
-    cm = matplotlib.cm.get_cmap(_cmap) if type(_cmap) is str else _cmap
-    colors = [c if confidence is None else np.array(cm(confidence[i])) for i in range(len(confidence))]
-    text_colors = ["black" if cur_ftype == -1 else "blue" if cur_ftype == 0 else "red" for cur_ftype in ftype]
-
-    if plot_method == "pv":
-        try:
-            import pyvista as pv
-        except ImportError:
-            raise ImportError("Please install pyvista first.")
-
-        emitting_indices = [index for index, color in enumerate(text_colors) if color == "red"]
-        unstable_indices = [index for index, color in enumerate(text_colors) if color == "blue"]
-        absorbing_indices = [index for index, color in enumerate(text_colors) if color == "black"]
-        fps_type_indices = [emitting_indices, unstable_indices, absorbing_indices]
-
-        r, c = ax.shape[0], ax.shape[1]
-        subplot_indices = [[i, j] for i in range(r) for j in range(c)]
-        cur_subplot = 0
-
-        for i in range(r * c):
-
-            if r * c != 1:
-                ax.subplot(subplot_indices[cur_subplot][0], subplot_indices[cur_subplot][1])
-                cur_subplot += 1
-
-            for indices in fps_type_indices:
-                points = pv.PolyData(Xss[indices])
-                points.point_data["colors"] = np.array(colors)[indices]
-                points["Labels"] = [str(idx) for idx in indices]
-
-                ax.add_points(points, render_points_as_spheres=True, rgba=True, point_size=15)
-                ax.add_point_labels(
-                    points,
-                    "Labels",
-                    text_color=text_colors[indices[0]],
-                    font_size=24,
-                    shape_opacity=0,
-                    show_points=False,
-                    always_visible=True,
-                )
-
-        return save_pyvista_plotter(
-            pl=ax,
-            save_show_or_return=save_show_or_return,
-            save_kwargs=save_kwargs,
-        )
-    elif plot_method == "plotly":
-        try:
-            import plotly.graph_objects as go
-        except ImportError:
-            raise ImportError("Please install plotly first.")
-
-        r, c = ax._get_subplot_rows_columns()
-        r, c = list(r)[-1], list(c)[-1]
-        subplot_indices = [[i, j] for i in range(r) for j in range(c)]
-        cur_subplot = 0
-
-        for i in range(r * c):
-            ax.add_trace(
-                go.Scatter3d(
-                    x=Xss[:, 0],
-                    y=Xss[:, 1],
-                    z=Xss[:, 2],
-                    mode="markers+text",
-                    marker=dict(
-                        color=colors,
-                        size=15,
-                    ),
-                    text=[str(i) for i in range(len(Xss))],
-                    textfont=dict(
-                        color=text_colors,
-                        size=15,
-                    ),
-                    **kwargs,
-                ),
-                row=subplot_indices[cur_subplot][0] + 1, col=subplot_indices[cur_subplot][1] + 1,
-            )
-
-        return save_plotly_figure(
-            pl=ax,
-            save_show_or_return=save_show_or_return,
-            save_kwargs=save_kwargs,
-        )
-    else:
-        if ax is None:
-            ax = plt.gca()
-
-        for i in range(len(Xss)):
-            cur_ftype = ftype[i]
-            marker_ = markers.MarkerStyle(marker=marker, fillstyle=filltype[int(cur_ftype + 1)])
-            ax.scatter(
-                *Xss[i],
-                marker=marker_,
-                s=markersize,
-                c=c if confidence is None else np.array(cm(confidence[i])).reshape(1, -1),
-                edgecolor=_select_font_color(_background),
-                linewidths=1,
-                cmap=_cmap,
-                vmin=0,
-                zorder=5,
-            )  # TODO: Figure out the user warning that no data for colormapping provided via 'c'.
-            txt = ax.text(
-                *Xss[i],
-                repr(i),
-                c=("black" if cur_ftype == -1 else "blue" if cur_ftype == 0 else "red"),
-                horizontalalignment="center",
-                verticalalignment="center",
-                zorder=6,
-                weight="bold",
-            )
-            txt.set_path_effects(
-                [
-                    PathEffects.Stroke(linewidth=1.5, foreground=_background, alpha=0.8),
-                    PathEffects.Normal(),
-                ]
-            )
-
-        return save_show_ret("plot_fixed_points", save_show_or_return, save_kwargs, ax)
-
-
-def plot_traj(
-    f: Callable,
-    y0: npt.ArrayLike,
-    t: npt.ArrayLike,
-    args: Sequence[Any] = (),
-    lw: float = 2,
-    background: Optional[str] = None,
-    integration_direction: Literal["forward", "backward", "both"] = "both",
-    save_show_or_return: Literal["save", "show", "return"] = "return",
-    save_kwargs: Dict[str, Any] = {},
-    ax: Optional[Axes] = None,
-) -> Optional[Axes]:
-    """Plots a trajectory on a phase portrait.
-    
-    Code adapted from: http://be150.caltech.edu/2017/handouts/dynamical_systems_approaches.html
-
-    Args:
-        f: the function for form f(y, t, *args). It would work as the right-hand-side of the dynamical system. Must
-            return a 2-array.
-        y0: the initial condition.
-        t: the time points for trajectory.
-        args: additional arguments to be passed to f. Defaults to ().
-        lw: the line width of the trajectory. Defaults to 2.
-        background: the background color of the plot. Defaults to None.
-        integration_direction: Determines whether to integrate the trajectory in the forward, backward, or both
-            direction. Default to "both".
-        save_show_or_return: whether to save, show or return the figure. Defaults to "return".
-        save_kwargs: a dictionary that will be passed to the save_show_ret function. By default, it is an empty dictionary
-            and the save_show_ret function will use the {"path": None, "prefix": 'plot_traj', "dpi": None, "ext": 'pdf',
-            "transparent": True, "close": True, "verbose": True} as its parameters. Otherwise, you can provide a
-            dictionary that properly modify those keys according to your needs. Defaults to {}.
-        ax: the axis on which to make the plot. If None, new axis would be created. Defaults to None.
-
-    Returns:
-        None would be returned by default. If `save_show_or_return` is set to be 'return', the Axes of the generated
-        figure would be returned.
-    """
-
-    from matplotlib import rcParams
-    from matplotlib.colors import to_hex
-
-    if background is None:
-        _background = rcParams.get("figure.facecolor")
-        _background = to_hex(_background) if type(_background) is tuple else _background
-    else:
-        _background = background
-
-    if background in ["#ffffff", "black"]:
-        color = ["#ffffff"]
-    else:
-        color = "black"
-
-    if len(y0.shape) == 1:
-        ax = _plot_traj(y0, t, args, integration_direction, ax, color, lw, f)
-    else:
-        for i in range(y0.shape[0]):
-            cur_y0 = y0[i, None]  # don't drop dimension
-            ax = _plot_traj(cur_y0, t, args, integration_direction, ax, color, lw, f)
-
-    return save_show_ret("plot_traj", save_show_or_return, save_kwargs, ax)
-
-
-def plot_separatrix(
-    vecfld: Topography2D,
-    x_range: npt.ArrayLike,
-    y_range: npt.ArrayLike,
-    t: npt.ArrayLike,
-    noise: float = 1e-6,
-    lw: float = 3,
-    vecfld_dict: Dict[str, Any] = None,
-    background: Optional[str] = None,
-    save_show_or_return: Literal["save", "show", "return"] = "return",
-    save_kwargs: Dict[str, Any] = {},
-    ax: Optional[Axes] = None,
-) -> Optional[Axes]:
-    """Plot separatrix on phase portrait.
-
-    Args:
-        vecfld: an instance of the VectorField2D class which presumably has fixed points computed and stored.
-        x_range: the range of values for x-axis.
-        y_range: the range of values for y-axis.
-        t: the time points for trajectory.
-        noise: a small noise added to steady states for drawing the separatrix. Defaults to 1e-6.
-        lw: the line width of the trajectory. Defaults to 3.
-        vecfld_dict: a dict with entries to create a `VectorField2D` instance. Defaults to None.
-        background: the background color of the plot. Defaults to None.
-        save_show_or_return: whether to save, show, or return the generated figure. Defaults to "return".
-        save_kwargs: a dictionary that will be passed to the save_show_ret function. By default, it is an empty dictionary
-            and the save_show_ret function will use the {"path": None, "prefix": 'plot_separatrix', "dpi": None,
-            "ext": 'pdf', "transparent": True, "close": True, "verbose": True} as its parameters. Otherwise, you can
-            provide a dictionary that properly modify those keys according to your needs. Defaults to {}.
-        ax: the axis on which to make the plot. Defaults to None.
-
-    Returns:
-        None would be returned by default. If `save_show_or_return` is set to be 'return', the Axes of the generated
-        figure would get returned.
-    """
-
-    from matplotlib import rcParams
-    from matplotlib.colors import to_hex
-
-    if background is None:
-        _background = rcParams.get("figure.facecolor")
-        _background = to_hex(_background) if type(_background) is tuple else _background
-    else:
-        _background = background
-
-    if _background in ["#ffffff", "black"]:
-        color = ["#ffffff"]
-    else:
-        color = "tomato"
-
-    # No saddle point, no separatrix.
-    if vecfld_dict is None or "separatrix" not in vecfld_dict.keys():
-        if vecfld_dict is not None:
-            X_basis = vecfld_dict["X"][:, :2]
-            min_, max_ = X_basis.min(0), X_basis.max(0)
-
-            xlim = [
-                min_[0] - (max_[0] - min_[0]) * 0.1,
-                max_[0] + (max_[0] - min_[0]) * 0.1,
-            ]
-            ylim = [
-                min_[1] - (max_[1] - min_[1]) * 0.1,
-                max_[1] + (max_[1] - min_[1]) * 0.1,
-            ]
-
-            vecfld2d = Topography2D(vecfld, X_data=vecfld_dict["X"])
-            vecfld2d.find_fixed_points_by_sampling(25, xlim, ylim)
-
-            fps, ftypes = vecfld2d.get_fixed_points(get_types=True)
-            J = vecfld2d.Xss.get_J()
-            saddle = fps[ftypes == 0]
-            Jacobian = J[[ftypes == 0]]
-            if len(saddle) > 0:
-                # Negative time function to integrate to compute separatrix
-                def rhs(ab, t):
-                    # Unpack variables
-                    a, b = ab
-                    # Stop integrating if we get the edge of where we want to integrate
-                    if x_range[0] < a < x_range[1] and y_range[0] < b < y_range[1]:
-                        return -vecfld2d(ab)
-                    else:
-                        return np.array([0, 0])
-
-                # Parameters for building separatrix
-                # t = np.linspace(0, t_max, 400)
-                all_sep_a, all_sep_b = None, None
-                if ax is None:
-                    ax = plt.gca()
-                for i in range(len(saddle)):
-                    fps = saddle[i]
-                    J = Jacobian[i]
-                    # Build upper right branch of separatrix
-                    ab0 = fps + noise
-                    ab_upper = scipy.integrate.odeint(rhs, ab0, t)
-
-                    # Build lower left branch of separatrix
-                    ab0 = fps - noise
-                    ab_lower = scipy.integrate.odeint(rhs, ab0, t)
-
-                    # Concatenate, reversing lower so points are sequential
-                    sep_a = np.concatenate((ab_lower[::-1, 0], ab_upper[:, 0]))
-                    sep_b = np.concatenate((ab_lower[::-1, 1], ab_upper[:, 1]))
-
-                    # Plot
-                    ax.plot(sep_a, sep_b, "-", color=color, lw=lw)
-
-                    all_sep_a = sep_a if all_sep_a is None else np.concatenate((all_sep_a, sep_a))
-                    all_sep_b = sep_b if all_sep_b is None else np.concatenate((all_sep_b, sep_b))
-
-    return save_show_ret("plot_separatrix", save_show_or_return, save_kwargs, ax)
-
-
 @docstrings.with_indent(4)
 def topography(
     adata: AnnData,
@@ -1752,3 +1040,715 @@ def topography_3D(
                 )
 
         return save_show_ret("topography", save_show_or_return, save_kwargs, axes_list if len(axes_list) > 1 else axes_list[0])
+
+
+def plot_flow_field(
+        vecfld: Topography2D,
+        x_range: npt.ArrayLike,
+        y_range: npt.ArrayLike,
+        n_grid: int = 100,
+        start_points: Optional[np.ndarray] = None,
+        integration_direction: Literal["forward", "backward", "both"] = "both",
+        background: Optional[str] = None,
+        density: float = 1,
+        linewidth: float = 1,
+        streamline_color: Optional[str] = None,
+        streamline_alpha: float = 0.4,
+        color_start_points: Optional[float] = None,
+        save_show_or_return: Literal["save", "show", "return"] = "return",
+        save_kwargs: Dict[str, Any] = {},
+        ax: Optional[Axes] = None,
+        **streamline_kwargs,
+) -> Optional[Axes]:
+    """Plots the flow field with line thickness proportional to speed.
+
+    Code adapted from: http://be150.caltech.edu/2017/handouts/dynamical_systems_approaches.html
+
+    Args:
+        vecfld: an instance of the vector_field class.
+        x_range: the range of values for x-axis.
+        y_range: the range of values for y-axis.
+        n_grid: the number of grid points to use in computing derivatives on phase portrait. Defaults to 100.
+        start_points: the initial points from which the streamline will be drawn. Defaults to None.
+        integration_direction: integrate the streamline in forward, backward or both directions. default is 'both'.
+            Defaults to "both".
+        background: the background color of the plot. Defaults to None.
+        density: the density of the plt.streamplot function. Defaults to 1.
+        linewidth: the multiplier of automatically calculated linewidth passed to the plt.streamplot function. Defaults
+            to 1.
+        streamline_color: the color of the vector field streamlines. Defaults to None.
+        streamline_alpha: the alpha value applied to the vector field streamlines. Defaults to 0.4.
+        color_start_points: the color of the starting point that will be used to predict cell fates. Defaults to None.
+        save_show_or_return: whether to save, show or return the figure. Defaults to "return".
+        save_kwargs: a dictionary that will be passed to the save_show_ret function. By default, it is an empty dictionary
+            and the save_show_ret function will use the {"path": None, "prefix": 'plot_flow_field', "dpi": None,
+            "ext": 'pdf', "transparent": True, "close": True, "verbose": True} as its parameters. Otherwise, you can
+            provide a dictionary that properly modify those keys according to your needs. Defaults to {}.
+        ax: the Axis on which to make the plot. Defaults to None.
+
+    Returns:
+        None would be returned by default. If `save_show_or_return` is set to be 'return', the Axes of the generated
+        figure would be returned.
+    """
+
+    from matplotlib import patches, rcParams
+    from matplotlib.colors import to_hex
+
+    if background is None:
+        _background = rcParams.get("figure.facecolor")
+        _background = to_hex(_background) if type(_background) is tuple else _background
+    else:
+        _background = background
+
+    if _background in ["#ffffff", "black"]:
+        color, color_start_points = (
+            "white" if streamline_color is None else streamline_color,
+            "red" if color_start_points is None else color_start_points,
+        )
+    else:
+        color, color_start_points = (
+            "black" if streamline_color is None else streamline_color,
+            "red" if color_start_points is None else color_start_points,
+        )
+
+    # Set up u,v space
+    u = np.linspace(x_range[0], x_range[1], n_grid)
+    v = np.linspace(y_range[0], y_range[1], n_grid)
+    uu, vv = np.meshgrid(u, v)
+
+    # Compute derivatives
+    u_vel = np.empty_like(uu)
+    v_vel = np.empty_like(vv)
+    for i in range(uu.shape[0]):
+        for j in range(uu.shape[1]):
+            u_vel[i, j], v_vel[i, j] = vecfld(np.array([uu[i, j], vv[i, j]]))
+
+    # Compute speed
+    speed = np.sqrt(u_vel ** 2 + v_vel ** 2)
+
+    # Make linewidths proportional to speed,
+    # with minimal line width of 0.5 and max of 3
+    # lw = lw_min + (lw_max - lw_min) * speed / speed.max()
+
+    streamplot_kwargs = {
+        "density": density * 2,
+        "linewidth": None,
+        "cmap": None,
+        "norm": None,
+        "arrowsize": 1,
+        "arrowstyle": "fancy",
+        "minlength": 0.1,
+        "transform": None,
+        "maxlength": 4.0,
+        "zorder": 3,
+    }
+    linewidth *= 2 * speed / speed[~np.isnan(speed)].max()
+    streamplot_kwargs.update({"linewidth": linewidth})
+
+    streamplot_kwargs = update_dict(streamplot_kwargs, streamline_kwargs)
+
+    # Make stream plot
+    if ax is None:
+        ax = plt.gca()
+    if start_points is None:
+        s = ax.streamplot(
+            uu,
+            vv,
+            u_vel,
+            v_vel,
+            color=color,
+            **streamplot_kwargs,
+        )
+        set_arrow_alpha(ax, streamline_alpha)
+        set_stream_line_alpha(s, streamline_alpha)
+    else:
+        if len(start_points.shape) == 1:
+            start_points.reshape((1, 2))
+        ax.scatter(*start_points, marker="*", zorder=4)
+
+        s = ax.streamplot(
+            uu,
+            vv,
+            u_vel,
+            v_vel,
+            start_points=start_points,
+            integration_direction=integration_direction,
+            color=color_start_points,
+            **streamplot_kwargs,
+        )
+        set_arrow_alpha(ax, streamline_alpha)
+        set_stream_line_alpha(s, streamline_alpha)
+
+    return save_show_ret("plot_flow_field", save_show_or_return, save_kwargs, ax)
+
+
+def plot_nullclines(
+        vecfld: Topography2D,
+        vecfld_dict: Dict[str, Any] = None,
+        lw: float = 3,
+        background: Optional[float] = None,
+        save_show_or_return: Literal["save", "show", "return"] = "return",
+        save_kwargs: Dict[str, Any] = {},
+        ax: Optional[Axes] = None,
+) -> Optional[Axes]:
+    """Plot nullclines stored in the VectorField2D class.
+
+    Args:
+        vecfld: an instance of the VectorField2D class which presumably has fixed points computed and stored.
+        vecfld_dict: a dict with entries to create a `VectorField2D` instance. Defaults to None.
+        lw: the linewidth of the nullcline. Defaults to 3.
+        background: the background color of the plot. Defaults to None.
+        save_show_or_return: whether to save, show, or return the figure. Defaults to "return".
+        save_kwargs: a dictionary that will be passed to the save_show_ret function. By default, it is an empty dictionary
+            and the save_show_ret function will use the {"path": None, "prefix": 'plot_nullclines', "dpi": None,
+            "ext": 'pdf', "transparent": True, "close": True, "verbose": True} as its parameters. Otherwise, you can
+            provide a dictionary that properly modify those keys according to your needs. Defaults to {}.
+        ax: the matplotlib axes used for plotting. Default is to use the current axis. Defaults to None.
+
+    Returns:
+        None would be returned by default. If `save_show_or_return` is set to be 'return', the Axes of the generated
+        figure would be returned.
+    """
+
+    from matplotlib import rcParams
+    from matplotlib.colors import to_hex
+
+    if background is None:
+        _background = rcParams.get("figure.facecolor")
+        _background = to_hex(_background) if type(_background) is tuple else _background
+    else:
+        _background = background
+
+    if _background in ["#ffffff", "black"]:
+        colors = ["#189e1a", "#1f77b4"]
+    else:
+        colors = ["#189e1a", "#1f77b4"]
+
+    NCx, NCy = None, None
+
+    # if nullcline is not previously calculated, calculate and plot them
+    if vecfld_dict is None or "NCx" not in vecfld_dict.keys() or "NCy" not in vecfld_dict.keys():
+        if vecfld_dict is not None:
+            X_basis = vecfld_dict["X"][:, :2]
+            min_, max_ = X_basis.min(0), X_basis.max(0)
+
+            xlim = [
+                min_[0] - (max_[0] - min_[0]) * 0.1,
+                max_[0] + (max_[0] - min_[0]) * 0.1,
+            ]
+            ylim = [
+                min_[1] - (max_[1] - min_[1]) * 0.1,
+                max_[1] + (max_[1] - min_[1]) * 0.1,
+            ]
+
+            vecfld2d = Topography2D(vecfld, X_data=vecfld_dict["X"])
+            vecfld2d.find_fixed_points_by_sampling(25, xlim, ylim)
+
+            if vecfld2d.get_num_fixed_points() > 0:
+                vecfld2d.compute_nullclines(xlim, ylim, find_new_fixed_points=True)
+
+                NCx, NCy = vecfld2d.NCx, vecfld.NCy
+    else:
+        NCx, NCy = (
+            [vecfld_dict["NCx"][index] for index in vecfld_dict["NCx"]],
+            [vecfld_dict["NCy"][index] for index in vecfld_dict["NCy"]],
+        )
+
+    if ax is None:
+        ax = plt.gca()
+
+    if NCx is not None and NCy is not None:
+        for ncx in NCx:
+            ax.plot(*ncx.T, c=colors[0], lw=lw)
+        for ncy in NCy:
+            ax.plot(*ncy.T, c=colors[1], lw=lw)
+
+    return save_show_ret("plot_nullclines", save_show_or_return, save_kwargs, ax)
+
+
+def plot_fixed_points_2d(
+        vecfld: Topography2D,
+        marker: str = "o",
+        markersize: float = 200,
+        cmap: Optional[str] = None,
+        filltype: List[str] = ["full", "top", "none"],
+        background: Optional[str] = None,
+        save_show_or_return: Literal["save", "show", "return"] = "return",
+        save_kwargs: Dict[str, Any] = {},
+        ax: Optional[Axes] = None,
+) -> Optional[Axes]:
+    """Plot fixed points stored in the VectorField2D class.
+
+    Args:
+        vecfld: an instance of the VectorField2D class which presumably has fixed points computed and stored.
+        marker: the marker type. Any string supported by matplotlib.markers. Defaults to "o".
+        markersize: the size of the marker. Defaults to 200.
+        cmap: the name of a matplotlib colormap to use for coloring or shading the confidence of fixed points. If None,
+            the default color map will set to be viridis (inferno) when the background is white (black). Defaults to
+            None.
+        filltype: the fill type used for stable, saddle, and unstable fixed points. Default is 'full', 'top' and 'none',
+            respectively. Defaults to ["full", "top", "none"].
+        background: the background color of the plot. Defaults to None.
+        save_show_or_return: whether to save, show or return the figure. Defaults to "return".
+        save_kwargs: a dictionary that will be passed to the save_show_ret function. By default, it is an empty dictionary
+            and the save_show_ret function will use the {"path": None, "prefix": 'plot_fixed_points', "dpi": None,
+            "ext": 'pdf', "transparent": True, "close": True, "verbose": True} as its parameters. Otherwise, you can
+            provide a dictionary that properly modify those keys according to your needs. Defaults to {}.
+        ax: the matplotlib axes used for plotting. Default is to use the current axis. Defaults to None.
+
+    Returns:
+        None would be returned by default. If `save_show_or_return` is set to be 'return', the Axes of the generated
+        figure would be returned.
+    """
+
+    import matplotlib
+    import matplotlib.patheffects as PathEffects
+    from matplotlib import markers, rcParams
+    from matplotlib.colors import to_hex
+
+    if background is None:
+        _background = rcParams.get("figure.facecolor")
+        _background = to_hex(_background) if type(_background) is tuple else _background
+    else:
+        _background = background
+
+    if _background in ["#ffffff", "black"]:
+        _theme_ = "inferno"
+    else:
+        _theme_ = "viridis"
+    _cmap = _themes[_theme_]["cmap"] if cmap is None else cmap
+
+    Xss, ftype = vecfld.get_fixed_points(get_types=True)
+    confidence = vecfld.get_Xss_confidence()
+
+    if ax is None:
+        ax = plt.gca()
+
+    cm = matplotlib.cm.get_cmap(_cmap) if type(_cmap) is str else _cmap
+    for i in range(len(Xss)):
+        cur_ftype = ftype[i]
+        marker_ = markers.MarkerStyle(marker=marker, fillstyle=filltype[int(cur_ftype + 1)])
+        ax.scatter(
+            *Xss[i],
+            marker=marker_,
+            s=markersize,
+            c=np.array(cm(confidence[i])).reshape(1, -1),
+            edgecolor=_select_font_color(_background),
+            linewidths=1,
+            cmap=_cmap,
+            vmin=0,
+            zorder=5,
+        )
+        txt = ax.text(
+            *Xss[i],
+            repr(i),
+            c=("black" if cur_ftype == -1 else "blue" if cur_ftype == 0 else "red"),
+            horizontalalignment="center",
+            verticalalignment="center",
+            zorder=6,
+            weight="bold",
+        )
+        txt.set_path_effects(
+            [
+                PathEffects.Stroke(linewidth=1.5, foreground=_background, alpha=0.8),
+                PathEffects.Normal(),
+            ]
+        )
+
+    return save_show_ret("plot_fixed_points", save_show_or_return, save_kwargs, ax)
+
+
+def plot_fixed_points(
+        vecfld: Topography2D,
+        vecfld_dict: Dict[str, Any] = None,
+        marker: str = "o",
+        markersize: int = 200,
+        c: str = "w",
+        cmap: Optional[str] = None,
+        filltype: List[str] = ["full", "top", "none"],
+        background: Optional[str] = None,
+        save_show_or_return: Literal["save", "show", "return"] = "return",
+        save_kwargs: Dict[str, Any] = {},
+        plot_method: Literal["pv", "matplotlib"] = "matplotlib",
+        ax: Optional[Axes] = None,
+        **kwargs,
+) -> Optional[Axes]:
+    """Plot fixed points stored in the VectorField class.
+
+    Args:
+        vecfld: an instance of the vector_field class.
+        vecfld_dict: a dict with entries to create a `VectorField2D` instance. Defaults to None.
+        marker: the marker type. Any string supported by matplotlib.markers. Defaults to "o".
+        markersize: the size of the marker. Defaults to 200.
+        c: the marker colors. Defaults to "w".
+        cmap: the name of a matplotlib colormap to use for coloring or shading the confidence of fixed points. If None,
+            the default color map will set to be viridis (inferno) when the background is white (black). Defaults to
+            None.
+        filltype: the fill type used for stable, saddle, and unstable fixed points. Default is 'full', 'top' and 'none',
+            respectively. Defaults to ["full", "top", "none"].
+        background: the background color of the plot. Defaults to None.
+        save_show_or_return: whether to save, show or return the figure. Defaults to "return".
+        save_kwargs: a dictionary that will be passed to the save_show_ret function. By default, it is an empty dictionary
+            and the save_show_ret function will use the {"path": None, "prefix": 'plot_fixed_points', "dpi": None,
+            "ext": 'pdf', "transparent": True, "close": True, "verbose": True} as its parameters. Otherwise, you can
+            provide a dictionary that properly modify those keys according to your needs. Defaults to {}.
+        plot_method: the method to plot 3D points. Options include `pv` (pyvista) and `matplotlib`.
+        ax: the matplotlib axes or pyvista plotter used for plotting. Default is to use the current axis. Defaults to
+            None.
+
+    Returns:
+        None would be returned by default. If `save_show_or_return` is set to be 'return', the Axes of the generated
+        figure would be returned.
+    """
+
+    import matplotlib
+    import matplotlib.patheffects as PathEffects
+    from matplotlib import markers, rcParams
+    from matplotlib.colors import to_hex
+
+    if background is None:
+        _background = rcParams.get("figure.facecolor")
+        _background = to_hex(_background) if type(_background) is tuple else _background
+    else:
+        _background = background
+
+    if _background in ["#ffffff", "black"]:
+        _theme_ = "inferno"
+    else:
+        _theme_ = "viridis"
+    _cmap = _themes[_theme_]["cmap"] if cmap is None else cmap
+
+    if vecfld_dict is None or any(("Xss" not in vecfld_dict.keys(), "ftype" not in vecfld_dict.keys())):
+        if vecfld_dict is not None:
+            if vecfld_dict["X"].shape[1] == 2:
+                min_, max_ = vecfld_dict["X"].min(0), vecfld_dict["X"].max(0)
+
+                xlim = [
+                    min_[0] - (max_[0] - min_[0]) * 0.1,
+                    max_[0] + (max_[0] - min_[0]) * 0.1,
+                ]
+                ylim = [
+                    min_[1] - (max_[1] - min_[1]) * 0.1,
+                    max_[1] + (max_[1] - min_[1]) * 0.1,
+                ]
+
+                vecfld = Topography2D(vecfld, X_data=vecfld_dict["X"])
+                vecfld.find_fixed_points_by_sampling(25, xlim, ylim)
+                if vecfld.get_num_fixed_points() > 0:
+                    vecfld.compute_nullclines(xlim, ylim, find_new_fixed_points=True)
+
+                Xss, ftype = vecfld.get_fixed_points(get_types=True)
+                confidence = vecfld.get_Xss_confidence()
+            else:
+                confidence = None
+                vecfld = BaseVectorField(
+                    X=vecfld_dict["X"][vecfld_dict["valid_ind"], :],
+                    V=vecfld_dict["Y"][vecfld_dict["valid_ind"], :],
+                    func=vecfld,
+                )
+
+                Xss, ftype = vecfld.get_fixed_points(**kwargs)
+                if Xss.ndim > 1 and Xss.shape[1] > 2:
+                    fp_ind = nearest_neighbors(Xss, vecfld.data["X"], 1).flatten()
+                    # need to use "X_basis" to plot on the scatter point space
+                    Xss = vecfld_dict["X_basis"][fp_ind]
+
+    else:
+        Xss, ftype, confidence = (
+            vecfld_dict["Xss"],
+            vecfld_dict["ftype"],
+            vecfld_dict["confidence"],
+        )
+
+    cm = matplotlib.cm.get_cmap(_cmap) if type(_cmap) is str else _cmap
+    colors = [c if confidence is None else np.array(cm(confidence[i])) for i in range(len(confidence))]
+    text_colors = ["black" if cur_ftype == -1 else "blue" if cur_ftype == 0 else "red" for cur_ftype in ftype]
+
+    if plot_method == "pv":
+        try:
+            import pyvista as pv
+        except ImportError:
+            raise ImportError("Please install pyvista first.")
+
+        emitting_indices = [index for index, color in enumerate(text_colors) if color == "red"]
+        unstable_indices = [index for index, color in enumerate(text_colors) if color == "blue"]
+        absorbing_indices = [index for index, color in enumerate(text_colors) if color == "black"]
+        fps_type_indices = [emitting_indices, unstable_indices, absorbing_indices]
+
+        r, c = ax.shape[0], ax.shape[1]
+        subplot_indices = [[i, j] for i in range(r) for j in range(c)]
+        cur_subplot = 0
+
+        for i in range(r * c):
+
+            if r * c != 1:
+                ax.subplot(subplot_indices[cur_subplot][0], subplot_indices[cur_subplot][1])
+                cur_subplot += 1
+
+            for indices in fps_type_indices:
+                points = pv.PolyData(Xss[indices])
+                points.point_data["colors"] = np.array(colors)[indices]
+                points["Labels"] = [str(idx) for idx in indices]
+
+                ax.add_points(points, render_points_as_spheres=True, rgba=True, point_size=15)
+                ax.add_point_labels(
+                    points,
+                    "Labels",
+                    text_color=text_colors[indices[0]],
+                    font_size=24,
+                    shape_opacity=0,
+                    show_points=False,
+                    always_visible=True,
+                )
+
+        return save_pyvista_plotter(
+            pl=ax,
+            save_show_or_return=save_show_or_return,
+            save_kwargs=save_kwargs,
+        )
+    elif plot_method == "plotly":
+        try:
+            import plotly.graph_objects as go
+        except ImportError:
+            raise ImportError("Please install plotly first.")
+
+        r, c = ax._get_subplot_rows_columns()
+        r, c = list(r)[-1], list(c)[-1]
+        subplot_indices = [[i, j] for i in range(r) for j in range(c)]
+        cur_subplot = 0
+
+        for i in range(r * c):
+            ax.add_trace(
+                go.Scatter3d(
+                    x=Xss[:, 0],
+                    y=Xss[:, 1],
+                    z=Xss[:, 2],
+                    mode="markers+text",
+                    marker=dict(
+                        color=colors,
+                        size=15,
+                    ),
+                    text=[str(i) for i in range(len(Xss))],
+                    textfont=dict(
+                        color=text_colors,
+                        size=15,
+                    ),
+                    **kwargs,
+                ),
+                row=subplot_indices[cur_subplot][0] + 1, col=subplot_indices[cur_subplot][1] + 1,
+            )
+
+        return save_plotly_figure(
+            pl=ax,
+            save_show_or_return=save_show_or_return,
+            save_kwargs=save_kwargs,
+        )
+    else:
+        if ax is None:
+            ax = plt.gca()
+
+        for i in range(len(Xss)):
+            cur_ftype = ftype[i]
+            marker_ = markers.MarkerStyle(marker=marker, fillstyle=filltype[int(cur_ftype + 1)])
+            ax.scatter(
+                *Xss[i],
+                marker=marker_,
+                s=markersize,
+                c=c if confidence is None else np.array(cm(confidence[i])).reshape(1, -1),
+                edgecolor=_select_font_color(_background),
+                linewidths=1,
+                cmap=_cmap,
+                vmin=0,
+                zorder=5,
+            )  # TODO: Figure out the user warning that no data for colormapping provided via 'c'.
+            txt = ax.text(
+                *Xss[i],
+                repr(i),
+                c=("black" if cur_ftype == -1 else "blue" if cur_ftype == 0 else "red"),
+                horizontalalignment="center",
+                verticalalignment="center",
+                zorder=6,
+                weight="bold",
+            )
+            txt.set_path_effects(
+                [
+                    PathEffects.Stroke(linewidth=1.5, foreground=_background, alpha=0.8),
+                    PathEffects.Normal(),
+                ]
+            )
+
+        return save_show_ret("plot_fixed_points", save_show_or_return, save_kwargs, ax)
+
+
+def plot_traj(
+        f: Callable,
+        y0: npt.ArrayLike,
+        t: npt.ArrayLike,
+        args: Sequence[Any] = (),
+        lw: float = 2,
+        background: Optional[str] = None,
+        integration_direction: Literal["forward", "backward", "both"] = "both",
+        save_show_or_return: Literal["save", "show", "return"] = "return",
+        save_kwargs: Dict[str, Any] = {},
+        ax: Optional[Axes] = None,
+) -> Optional[Axes]:
+    """Plots a trajectory on a phase portrait.
+
+    Code adapted from: http://be150.caltech.edu/2017/handouts/dynamical_systems_approaches.html
+
+    Args:
+        f: the function for form f(y, t, *args). It would work as the right-hand-side of the dynamical system. Must
+            return a 2-array.
+        y0: the initial condition.
+        t: the time points for trajectory.
+        args: additional arguments to be passed to f. Defaults to ().
+        lw: the line width of the trajectory. Defaults to 2.
+        background: the background color of the plot. Defaults to None.
+        integration_direction: Determines whether to integrate the trajectory in the forward, backward, or both
+            direction. Default to "both".
+        save_show_or_return: whether to save, show or return the figure. Defaults to "return".
+        save_kwargs: a dictionary that will be passed to the save_show_ret function. By default, it is an empty dictionary
+            and the save_show_ret function will use the {"path": None, "prefix": 'plot_traj', "dpi": None, "ext": 'pdf',
+            "transparent": True, "close": True, "verbose": True} as its parameters. Otherwise, you can provide a
+            dictionary that properly modify those keys according to your needs. Defaults to {}.
+        ax: the axis on which to make the plot. If None, new axis would be created. Defaults to None.
+
+    Returns:
+        None would be returned by default. If `save_show_or_return` is set to be 'return', the Axes of the generated
+        figure would be returned.
+    """
+
+    from matplotlib import rcParams
+    from matplotlib.colors import to_hex
+
+    if background is None:
+        _background = rcParams.get("figure.facecolor")
+        _background = to_hex(_background) if type(_background) is tuple else _background
+    else:
+        _background = background
+
+    if background in ["#ffffff", "black"]:
+        color = ["#ffffff"]
+    else:
+        color = "black"
+
+    if len(y0.shape) == 1:
+        ax = _plot_traj(y0, t, args, integration_direction, ax, color, lw, f)
+    else:
+        for i in range(y0.shape[0]):
+            cur_y0 = y0[i, None]  # don't drop dimension
+            ax = _plot_traj(cur_y0, t, args, integration_direction, ax, color, lw, f)
+
+    return save_show_ret("plot_traj", save_show_or_return, save_kwargs, ax)
+
+
+def plot_separatrix(
+        vecfld: Topography2D,
+        x_range: npt.ArrayLike,
+        y_range: npt.ArrayLike,
+        t: npt.ArrayLike,
+        noise: float = 1e-6,
+        lw: float = 3,
+        vecfld_dict: Dict[str, Any] = None,
+        background: Optional[str] = None,
+        save_show_or_return: Literal["save", "show", "return"] = "return",
+        save_kwargs: Dict[str, Any] = {},
+        ax: Optional[Axes] = None,
+) -> Optional[Axes]:
+    """Plot separatrix on phase portrait.
+
+    Args:
+        vecfld: an instance of the VectorField2D class which presumably has fixed points computed and stored.
+        x_range: the range of values for x-axis.
+        y_range: the range of values for y-axis.
+        t: the time points for trajectory.
+        noise: a small noise added to steady states for drawing the separatrix. Defaults to 1e-6.
+        lw: the line width of the trajectory. Defaults to 3.
+        vecfld_dict: a dict with entries to create a `VectorField2D` instance. Defaults to None.
+        background: the background color of the plot. Defaults to None.
+        save_show_or_return: whether to save, show, or return the generated figure. Defaults to "return".
+        save_kwargs: a dictionary that will be passed to the save_show_ret function. By default, it is an empty dictionary
+            and the save_show_ret function will use the {"path": None, "prefix": 'plot_separatrix', "dpi": None,
+            "ext": 'pdf', "transparent": True, "close": True, "verbose": True} as its parameters. Otherwise, you can
+            provide a dictionary that properly modify those keys according to your needs. Defaults to {}.
+        ax: the axis on which to make the plot. Defaults to None.
+
+    Returns:
+        None would be returned by default. If `save_show_or_return` is set to be 'return', the Axes of the generated
+        figure would get returned.
+    """
+
+    from matplotlib import rcParams
+    from matplotlib.colors import to_hex
+
+    if background is None:
+        _background = rcParams.get("figure.facecolor")
+        _background = to_hex(_background) if type(_background) is tuple else _background
+    else:
+        _background = background
+
+    if _background in ["#ffffff", "black"]:
+        color = ["#ffffff"]
+    else:
+        color = "tomato"
+
+    # No saddle point, no separatrix.
+    if vecfld_dict is None or "separatrix" not in vecfld_dict.keys():
+        if vecfld_dict is not None:
+            X_basis = vecfld_dict["X"][:, :2]
+            min_, max_ = X_basis.min(0), X_basis.max(0)
+
+            xlim = [
+                min_[0] - (max_[0] - min_[0]) * 0.1,
+                max_[0] + (max_[0] - min_[0]) * 0.1,
+            ]
+            ylim = [
+                min_[1] - (max_[1] - min_[1]) * 0.1,
+                max_[1] + (max_[1] - min_[1]) * 0.1,
+            ]
+
+            vecfld2d = Topography2D(vecfld, X_data=vecfld_dict["X"])
+            vecfld2d.find_fixed_points_by_sampling(25, xlim, ylim)
+
+            fps, ftypes = vecfld2d.get_fixed_points(get_types=True)
+            J = vecfld2d.Xss.get_J()
+            saddle = fps[ftypes == 0]
+            Jacobian = J[[ftypes == 0]]
+            if len(saddle) > 0:
+                # Negative time function to integrate to compute separatrix
+                def rhs(ab, t):
+                    # Unpack variables
+                    a, b = ab
+                    # Stop integrating if we get the edge of where we want to integrate
+                    if x_range[0] < a < x_range[1] and y_range[0] < b < y_range[1]:
+                        return -vecfld2d(ab)
+                    else:
+                        return np.array([0, 0])
+
+                # Parameters for building separatrix
+                # t = np.linspace(0, t_max, 400)
+                all_sep_a, all_sep_b = None, None
+                if ax is None:
+                    ax = plt.gca()
+                for i in range(len(saddle)):
+                    fps = saddle[i]
+                    J = Jacobian[i]
+                    # Build upper right branch of separatrix
+                    ab0 = fps + noise
+                    ab_upper = scipy.integrate.odeint(rhs, ab0, t)
+
+                    # Build lower left branch of separatrix
+                    ab0 = fps - noise
+                    ab_lower = scipy.integrate.odeint(rhs, ab0, t)
+
+                    # Concatenate, reversing lower so points are sequential
+                    sep_a = np.concatenate((ab_lower[::-1, 0], ab_upper[:, 0]))
+                    sep_b = np.concatenate((ab_lower[::-1, 1], ab_upper[:, 1]))
+
+                    # Plot
+                    ax.plot(sep_a, sep_b, "-", color=color, lw=lw)
+
+                    all_sep_a = sep_a if all_sep_a is None else np.concatenate((all_sep_a, sep_a))
+                    all_sep_b = sep_b if all_sep_b is None else np.concatenate((all_sep_b, sep_b))
+
+    return save_show_ret("plot_separatrix", save_show_or_return, save_kwargs, ax)

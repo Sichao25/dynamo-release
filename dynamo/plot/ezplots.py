@@ -446,6 +446,63 @@ def zstreamline(
     return save_show_ret("zstreamline", save_show_or_return, save_kwargs, plt.gca())
 
 
+def plot_jacobian_gene(
+    adata: AnnData,
+    jkey: str = "jacobian",
+    basis: str = "pca",
+    regulators: Optional[Iterable[str]] = None,
+    effectors: Optional[Iterable[str]] = None,
+    save_show_or_return: Literal["save", "show", "return"] = "show",
+    save_kwargs: dict = {},
+    **kwargs,
+) -> None:
+    """Plot scatter graphs for gene's jacobians to show relationship between the regulators and effectors.
+
+    Args:
+        adata: an AnnData object.
+        jkey: the key for jacobian data stored in adata.uns. Defaults to "jacobian".
+        basis: the basis of dimension reduction. It would be used to construct the key to find data in adata.uns.
+            Defaults to "pca".
+        regulators: the regulator genes to be considered. Defaults to None.
+        effectors: the effector genes to be considered. Defaults to None.
+        save_show_or_return: whether to save, show or return the figure. Defaults to "show".
+        save_kwargs: a dictionary that will be passed to the save_show_ret function. By default, it is an empty dictionary
+            and the save_show_ret function will use the
+                {
+                    "path": None,
+                    "prefix": 'phase_portraits',
+                    "dpi": None,
+                    "ext": 'pdf',
+                    "transparent": True,
+                    "close": True,
+                    "verbose": True
+                }
+            as its parameters. Otherwise, you can provide a dictionary that properly modify those keys according to
+            your needs. Defaults to {}.
+
+    Returns:
+        None would be returned in default. If `save_show_or_return` is set to be "return", the axes of the subplots.
+    """
+
+    jkey = f"{jkey}_{basis}" if basis is not None else jkey
+    J_dict = adata.uns[jkey]
+    c_arr = []
+    ti_arr = []
+    for i, reg in enumerate(J_dict["regulators"]):
+        if regulators is None or reg in regulators:
+            for j, eff in enumerate(J_dict["effectors"]):
+                if effectors is None or eff in effectors:
+                    c_arr.append(J_dict["jacobian_gene"][j, i, :])
+                    ti_arr.append(f"{eff} wrt. {reg}")
+    ax_list = multiplot(
+        lambda c, ti: [zscatter(adata, color=c, save_show_or_return="return", **kwargs), plt.title(ti)],
+        {"c": c_arr, "ti": ti_arr},
+        n_col=2,
+        subplot_size=(8, 4),
+    )
+    return save_show_ret("plot_jacobian_gene", save_show_or_return, save_kwargs, ax_list)
+
+
 def multiplot(
     plot_func: Callable,
     arr: Iterable[Any],
@@ -515,60 +572,3 @@ def multiplot(
         else:
             plot_func(arr[i])
     return save_show_ret("multiplot", save_show_or_return, save_kwargs, ax_list)
-
-
-def plot_jacobian_gene(
-    adata: AnnData,
-    jkey: str = "jacobian",
-    basis: str = "pca",
-    regulators: Optional[Iterable[str]] = None,
-    effectors: Optional[Iterable[str]] = None,
-    save_show_or_return: Literal["save", "show", "return"] = "show",
-    save_kwargs: dict = {},
-    **kwargs,
-) -> None:
-    """Plot scatter graphs for gene's jacobians to show relationship between the regulators and effectors.
-
-    Args:
-        adata: an AnnData object.
-        jkey: the key for jacobian data stored in adata.uns. Defaults to "jacobian".
-        basis: the basis of dimension reduction. It would be used to construct the key to find data in adata.uns.
-            Defaults to "pca".
-        regulators: the regulator genes to be considered. Defaults to None.
-        effectors: the effector genes to be considered. Defaults to None.
-        save_show_or_return: whether to save, show or return the figure. Defaults to "show".
-        save_kwargs: a dictionary that will be passed to the save_show_ret function. By default, it is an empty dictionary
-            and the save_show_ret function will use the
-                {
-                    "path": None,
-                    "prefix": 'phase_portraits',
-                    "dpi": None,
-                    "ext": 'pdf',
-                    "transparent": True,
-                    "close": True,
-                    "verbose": True
-                }
-            as its parameters. Otherwise, you can provide a dictionary that properly modify those keys according to
-            your needs. Defaults to {}.
-
-    Returns:
-        None would be returned in default. If `save_show_or_return` is set to be "return", the axes of the subplots.
-    """
-
-    jkey = f"{jkey}_{basis}" if basis is not None else jkey
-    J_dict = adata.uns[jkey]
-    c_arr = []
-    ti_arr = []
-    for i, reg in enumerate(J_dict["regulators"]):
-        if regulators is None or reg in regulators:
-            for j, eff in enumerate(J_dict["effectors"]):
-                if effectors is None or eff in effectors:
-                    c_arr.append(J_dict["jacobian_gene"][j, i, :])
-                    ti_arr.append(f"{eff} wrt. {reg}")
-    ax_list = multiplot(
-        lambda c, ti: [zscatter(adata, color=c, save_show_or_return="return", **kwargs), plt.title(ti)],
-        {"c": c_arr, "ti": ti_arr},
-        n_col=2,
-        subplot_size=(8, 4),
-    )
-    return save_show_ret("plot_jacobian_gene", save_show_or_return, save_kwargs, ax_list)

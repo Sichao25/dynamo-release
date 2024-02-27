@@ -41,125 +41,6 @@ from .utils import (
 )
 
 
-def bandwidth_nrd(x):
-    x = pd.Series(x)
-    h = (x.quantile([0.75]).values - x.quantile([0.25]).values) / 1.34
-
-    res = 4 * 1.06 * min(math.sqrt(np.var(x, ddof=1)), h) * (len(x) ** (-1 / 5))
-    return np.ndarray.item(res) if isinstance(res, np.ndarray) else res
-
-
-def rep(x, length):
-    len_x = len(x)
-    n = int(length / len_x)
-    r = length % len_x
-    re = []
-    for i in range(0, n):
-        re = re + x
-    for i in range(0, r):
-        re = re + [x[i]]
-    return re
-
-
-# https://stackoverflow.com/questions/46166933/python-numpy-equivalent-of-r-rep-and-rep-len-functions?rq=1
-# def rep2(x, length):
-#     x = np.array(x)
-#     res = np.repeat(x, length, axis=0)
-
-#     return res
-
-
-def rep2(x, length_out):
-    return np.tile(x, length_out // len(x) + 1)[:length_out]
-
-
-def dnorm(x, u=0, sig=1):
-    return np.exp(-((x - u) ** 2) / (2 * sig**2)) / (math.sqrt(2 * math.pi) * sig)
-
-
-def kde2d(
-    x: List[float], y: List[float], h: Optional[List[float]] = None, n: int = 25, lims: Optional[List[float]] = None
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Reproduce kde2d function behavior from MASS package in R.
-
-    Two-dimensional kernel density estimation with an axis-aligned bivariate normal kernel, evaluated on a square grid.
-
-    Args:
-        x: x coordinate of the data.
-        y: y coordinate of the data.
-        h: vector of bandwidths for `x` and `y` directions. if None, it would use normal reference bandwidth
-            (see `bandwidth.nrd`). A scalar value will be taken to apply to both directions. Defaults to None.
-        n: number of grid points in each direction. Can be scalar or a length-2 integer list. Defaults to 25.
-        lims: the limits of the rectangle covered by the grid as `x_l, x_u, y_l, y_u`. Defaults to None.
-
-    Raises:
-        ValueError: `x` and `y` have different sizes.
-        ValueError: `x` or `y` has non-valid values.
-        ValueError: `lims` has non-valid values.
-        ValueError: `h` has non-positive values.
-
-    Returns:
-        A tuple (gx, gy, z) where `gx` and `gy` are x and y coordinates of grid points, respectively; `z` is a `n[1]`
-        by `n[2]` matrix of estimated density: its rows correspond to the value of `x` and columns to the value of `y`.
-    """
-
-    nx = len(x)
-    if not lims:
-        lims = [min(x), max(x), min(y), max(y)]
-    if len(y) != nx:
-        raise ValueError("data vectors must be the same length")
-    elif not np.all(np.isfinite(x)) or not np.all(np.isfinite(y)):
-        raise ValueError("missing or infinite values in the data are not allowed")
-    elif not np.all(np.isfinite(lims)):
-        raise ValueError("only finite values are allowed in 'lims'")
-    else:
-        n = rep(n, length=2) if isinstance(n, list) else rep([n], length=2)
-        gx = np.linspace(lims[0], lims[1], n[0])
-        gy = np.linspace(lims[2], lims[3], n[1])
-        if h is None:
-            h = [bandwidth_nrd(x), bandwidth_nrd(y)]
-        else:
-            h = np.array(rep(h, length=2))
-
-        if np.any(h <= 0):
-            raise ValueError("bandwidths must be strictly positive")
-        else:
-            h /= 4
-            ax = pd.DataFrame((gx - x[:, np.newaxis]) / h[0]).T
-            ay = pd.DataFrame((gy - y[:, np.newaxis]) / h[1]).T
-            z = (np.matrix(dnorm(ax)) * np.matrix(dnorm(ay).T)) / (nx * h[0] * h[1])
-    return gx, gy, z
-
-
-def kde2d_to_mean_and_sigma(
-    gx: np.ndarray, gy: np.ndarray, dens: np.ndarray
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Calculate the mean and sigma of y grids corresponding to x grids from kde2d.
-
-    Args:
-        gx: x coordinates of grid points.
-        gy: y coordinates of grid points.
-        dens: estimated kernel density.
-
-    Returns:
-        A tuple (x_grid, y_mean, y_sigm) where x_grid is unique values of `gx`, `y_mean` and `y_sigm` are corresponding
-        mean and sigma of y grids.
-    """
-
-    x_grid = np.unique(gx)
-    y_mean = np.zeros(len(x_grid))
-    y_sigm = np.zeros(len(x_grid))
-    for i, x in enumerate(x_grid):
-        mask = gx == x
-        den = dens[mask]
-        Y_ = gy[mask]
-        mean = np.average(Y_, weights=den)
-        sigm = np.sqrt(np.average((Y_ - mean) ** 2, weights=den))
-        y_mean[i] = mean
-        y_sigm[i] = sigm
-    return x_grid, y_mean, y_sigm
-
-
 def response(
     adata: AnnData,
     pairs_mat: np.ndarray,
@@ -1456,3 +1337,122 @@ def hessian(
             return_data=return_data,
             save_key="hessian",
         )
+
+
+def bandwidth_nrd(x):
+    x = pd.Series(x)
+    h = (x.quantile([0.75]).values - x.quantile([0.25]).values) / 1.34
+
+    res = 4 * 1.06 * min(math.sqrt(np.var(x, ddof=1)), h) * (len(x) ** (-1 / 5))
+    return np.ndarray.item(res) if isinstance(res, np.ndarray) else res
+
+
+def rep(x, length):
+    len_x = len(x)
+    n = int(length / len_x)
+    r = length % len_x
+    re = []
+    for i in range(0, n):
+        re = re + x
+    for i in range(0, r):
+        re = re + [x[i]]
+    return re
+
+
+# https://stackoverflow.com/questions/46166933/python-numpy-equivalent-of-r-rep-and-rep-len-functions?rq=1
+# def rep2(x, length):
+#     x = np.array(x)
+#     res = np.repeat(x, length, axis=0)
+
+#     return res
+
+
+def rep2(x, length_out):
+    return np.tile(x, length_out // len(x) + 1)[:length_out]
+
+
+def dnorm(x, u=0, sig=1):
+    return np.exp(-((x - u) ** 2) / (2 * sig**2)) / (math.sqrt(2 * math.pi) * sig)
+
+
+def kde2d(
+    x: List[float], y: List[float], h: Optional[List[float]] = None, n: int = 25, lims: Optional[List[float]] = None
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Reproduce kde2d function behavior from MASS package in R.
+
+    Two-dimensional kernel density estimation with an axis-aligned bivariate normal kernel, evaluated on a square grid.
+
+    Args:
+        x: x coordinate of the data.
+        y: y coordinate of the data.
+        h: vector of bandwidths for `x` and `y` directions. if None, it would use normal reference bandwidth
+            (see `bandwidth.nrd`). A scalar value will be taken to apply to both directions. Defaults to None.
+        n: number of grid points in each direction. Can be scalar or a length-2 integer list. Defaults to 25.
+        lims: the limits of the rectangle covered by the grid as `x_l, x_u, y_l, y_u`. Defaults to None.
+
+    Raises:
+        ValueError: `x` and `y` have different sizes.
+        ValueError: `x` or `y` has non-valid values.
+        ValueError: `lims` has non-valid values.
+        ValueError: `h` has non-positive values.
+
+    Returns:
+        A tuple (gx, gy, z) where `gx` and `gy` are x and y coordinates of grid points, respectively; `z` is a `n[1]`
+        by `n[2]` matrix of estimated density: its rows correspond to the value of `x` and columns to the value of `y`.
+    """
+
+    nx = len(x)
+    if not lims:
+        lims = [min(x), max(x), min(y), max(y)]
+    if len(y) != nx:
+        raise ValueError("data vectors must be the same length")
+    elif not np.all(np.isfinite(x)) or not np.all(np.isfinite(y)):
+        raise ValueError("missing or infinite values in the data are not allowed")
+    elif not np.all(np.isfinite(lims)):
+        raise ValueError("only finite values are allowed in 'lims'")
+    else:
+        n = rep(n, length=2) if isinstance(n, list) else rep([n], length=2)
+        gx = np.linspace(lims[0], lims[1], n[0])
+        gy = np.linspace(lims[2], lims[3], n[1])
+        if h is None:
+            h = [bandwidth_nrd(x), bandwidth_nrd(y)]
+        else:
+            h = np.array(rep(h, length=2))
+
+        if np.any(h <= 0):
+            raise ValueError("bandwidths must be strictly positive")
+        else:
+            h /= 4
+            ax = pd.DataFrame((gx - x[:, np.newaxis]) / h[0]).T
+            ay = pd.DataFrame((gy - y[:, np.newaxis]) / h[1]).T
+            z = (np.matrix(dnorm(ax)) * np.matrix(dnorm(ay).T)) / (nx * h[0] * h[1])
+    return gx, gy, z
+
+
+def kde2d_to_mean_and_sigma(
+    gx: np.ndarray, gy: np.ndarray, dens: np.ndarray
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Calculate the mean and sigma of y grids corresponding to x grids from kde2d.
+
+    Args:
+        gx: x coordinates of grid points.
+        gy: y coordinates of grid points.
+        dens: estimated kernel density.
+
+    Returns:
+        A tuple (x_grid, y_mean, y_sigm) where x_grid is unique values of `gx`, `y_mean` and `y_sigm` are corresponding
+        mean and sigma of y grids.
+    """
+
+    x_grid = np.unique(gx)
+    y_mean = np.zeros(len(x_grid))
+    y_sigm = np.zeros(len(x_grid))
+    for i, x in enumerate(x_grid):
+        mask = gx == x
+        den = dens[mask]
+        Y_ = gy[mask]
+        mean = np.average(Y_, weights=den)
+        sigm = np.sqrt(np.average((Y_ - mean) ** 2, weights=den))
+        y_mean[i] = mean
+        y_sigm[i] = sigm
+    return x_grid, y_mean, y_sigm
