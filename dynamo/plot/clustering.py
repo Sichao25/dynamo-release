@@ -75,25 +75,6 @@ def louvain(
     return scatters(adata, basis=basis, color=color, *args, **kwargs)
 
 
-def infomap(adata: AnnData, basis: str = "umap", color: str = "infomap", *args, **kwargs) -> Optional[Axes]:
-    """Scatter plot for infomap community detection in selected basis.
-
-    Args:
-        adata: an Annodata object.
-        basis: the reduced dimension stored in adata.obsm. The specific basis key will be constructed in the following
-            priority if exits: 1) specific layer input + basis 2) X_ + basis 3) basis. E.g. if basis is PCA, `scatters`
-            is going to look for 1) if specific layer is spliced, `spliced_pca` 2) `X_pca` (dynamo convention) 3) `pca`.
-            Defaults to "umap".
-        color: any column names or gene expression, etc. that will be used for coloring cells. Defaults to "infomap".
-
-    Returns:
-        None would be returned in default and the plotted figure would be shown directly. If set
-        `save_show_or_return='return'` as a kwarg, the axes of the plot would be returned.
-    """
-
-    return scatters(adata, basis=basis, color=color, *args, **kwargs)
-
-
 def streamline_clusters(
     adata: AnnData, basis: str = "umap", clusters="clusters", color_key_cmap: str = "Spectral", *args, **kwargs
 ) -> None:

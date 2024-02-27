@@ -391,45 +391,6 @@ def circosPlot(
     return ax
 
 
-def circosPlotDeprecated(
-    adata: AnnData,
-    cluster: str,
-    cluster_name: str,
-    edges_list: Dict[str, pd.DataFrame],
-    network: nx.classes.digraph.DiGraph = None,
-    weight_scale: float = 5e3,
-    weight_threshold: float = 1e-4,
-    figsize: Tuple[float, float] = (12, 6),
-    save_show_or_return: Literal["save", "show", "return"] = "show",
-    save_kwargs: Dict[str, Any] = {},
-    **kwargs,
-) -> Optional[Any]:
-
-    """Deprecated.
-
-    A wrapper of `dynamo.pl.networks.nxvizPlot` to plot Circos graph. See the `nxvizPlot` for more information.
-
-    Returns:
-        None would be returned by default. If `save_show_or_return` is set to be 'return', the generated `nxviz` plot
-        object would be returned.
-    """
-
-    nxvizPlot(
-        adata,
-        cluster,
-        cluster_name,
-        edges_list,
-        plot="circosplot",
-        network=network,
-        weight_scale=weight_scale,
-        weight_threshold=weight_threshold,
-        figsize=figsize,
-        save_show_or_return=save_show_or_return,
-        save_kwargs=save_kwargs,
-        **kwargs,
-    )
-
-
 def hivePlot(
     adata: AnnData,
     edges_list: Dict[str, pd.DataFrame],

@@ -820,27 +820,3 @@ def plot_connectivity(
                 ax.set_title(cur_c)
 
     return save_show_ret("nneighbors", save_show_or_return, save_kwargs, plt.gcf())
-
-
-def pgraph():
-    """Plot principal graph of cells that learnt from graph embedding algorithms.
-
-    return:
-    """
-    pass
-
-
-def cgroups():
-    """Plot transition matrix graph of groups of cells that produced from clustering or other grouping procedures.
-
-    :return:
-    """
-    pass
-
-
-def causal_net():
-    """Plot causal regulatory networks of genes learnt with Scribe (https://github.com/aristoteleo/Scribe-py).
-
-    :return:
-    """
-    pass

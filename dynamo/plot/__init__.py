@@ -2,8 +2,9 @@
 """
 
 from .cell_cycle import cell_cycle_scores
-from .clustering import infomap, leiden, louvain, streamline_clusters
+from .clustering import leiden, louvain, streamline_clusters
 from .connectivity import nneighbors, plot_connectivity
+from .deprecated import circosPlotDeprecated, infomap
 from .dimension_reduction import pca, trimap, tsne, umap
 from .dynamics import dynamics, phase_portraits
 from .ezplots import (
@@ -20,7 +21,7 @@ from .fate import fate, fate_bias
 from .heatmaps import causality, comb_logic, hessian, plot_hill_function, response
 from .least_action_path import lap_min_time, least_action
 from .markers import bubble
-from .networks import arcPlot, circosPlot, circosPlotDeprecated, hivePlot
+from .networks import arcPlot, circosPlot, hivePlot
 from .preprocess import (
     basic_stats,
     biplot,
