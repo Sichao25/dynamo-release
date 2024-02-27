@@ -1,10 +1,31 @@
+import warnings
 from typing import Callable, Optional, Tuple
 
+import functools
 import numpy as np
 from scipy.optimize import OptimizeResult, minimize
 
 
-def action(path: np.ndarray, vf_func: Callable, D=1, dt=1) -> float:
+def deprecated(func):
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        warnings.warn(
+            f"{func.__name__} is deprecated and will be removed in a future release. "
+            f"Please update your code to use the new replacement function.",
+            category=DeprecationWarning,
+            stacklevel=2,
+        )
+        return func(*args, **kwargs)
+
+    return wrapper
+
+
+@deprecated
+def action(*args, **kwargs):
+    return _action_legacy(*args, **kwargs)
+
+
+def _action_legacy(path: np.ndarray, vf_func: Callable, D=1, dt=1) -> float:
     """Compute the action of a path by taking the sum of the squared distance between the path and the vector field and dividing by twice the diffusion constant. Conceptually, the action represents deviations from the streamline of the vector field. Reference Box 3 in the publication for more information.
 
     Args:
@@ -26,12 +47,22 @@ def action(path: np.ndarray, vf_func: Callable, D=1, dt=1) -> float:
     return s
 
 
-def action_aux(path_flatten, vf_func, dim, start=None, end=None, **kwargs):
-    path = reshape_path(path_flatten, dim, start=start, end=end)
-    return action(path, vf_func, **kwargs)
+@deprecated
+def action_aux(*args, **kwargs):
+    return _action_aux_legacy(*args, **kwargs)
 
 
-def action_grad(path: np.ndarray, vf_func: Callable, jac_func: Callable, D: float = 1, dt: float = 1) -> np.ndarray:
+def _action_aux_legacy(path_flatten, vf_func, dim, start=None, end=None, **kwargs):
+    path = _reshape_path_legacy(path_flatten, dim, start=start, end=end)
+    return _action_legacy(path, vf_func, **kwargs)
+
+
+@deprecated
+def action_grad(*args, **kwargs):
+    return _action_grad_legacy(*args, **kwargs)
+
+
+def _action_grad_legacy(path: np.ndarray, vf_func: Callable, jac_func: Callable, D: float = 1, dt: float = 1) -> np.ndarray:
     """Compute the gradient of the action with respect to each component of each point in the path using the analytical Jacobian.
 
     Args:
@@ -56,12 +87,22 @@ def action_grad(path: np.ndarray, vf_func: Callable, jac_func: Callable, D: floa
     return grad
 
 
-def action_grad_aux(path_flatten, vf_func, jac_func, dim, start=None, end=None, **kwargs):
-    path = reshape_path(path_flatten, dim, start=start, end=end)
-    return action_grad(path, vf_func, jac_func, **kwargs).flatten()
+@deprecated
+def action_grad_aux(*args, **kwargs):
+    return _action_grad_aux_legacy(*args, **kwargs)
 
 
-def reshape_path(path_flatten, dim, start=None, end=None):
+def _action_grad_aux_legacy(path_flatten, vf_func, jac_func, dim, start=None, end=None, **kwargs):
+    path = _reshape_path_legacy(path_flatten, dim, start=start, end=end)
+    return _action_grad_legacy(path, vf_func, jac_func, **kwargs).flatten()
+
+
+@deprecated
+def reshape_path(*args, **kwargs):
+    return _reshape_path_legacy(*args, **kwargs)
+
+
+def _reshape_path_legacy(path_flatten, dim, start=None, end=None):
     path = path_flatten.reshape(int(len(path_flatten) / dim), dim)
     if start is not None:
         path = np.vstack((start, path))
@@ -70,7 +111,12 @@ def reshape_path(path_flatten, dim, start=None, end=None):
     return path
 
 
-def least_action_path(
+@deprecated
+def least_action_path(*args, **kwargs):
+    return _least_action_path_legacy(*args, **kwargs)
+
+
+def _least_action_path_legacy(
     start: np.ndarray,
     end: np.ndarray,
     vf_func: Callable,
@@ -102,9 +148,9 @@ def least_action_path(
         )
     else:
         path_0 = init_path
-    fun = lambda x: action_aux(x, vf_func, dim, start=path_0[0], end=path_0[-1], D=D)
-    jac = lambda x: action_grad_aux(x, vf_func, jac_func, dim, start=path_0[0], end=path_0[-1], D=D)
+    fun = lambda x: _action_aux_legacy(x, vf_func, dim, start=path_0[0], end=path_0[-1], D=D)
+    jac = lambda x: _action_grad_aux_legacy(x, vf_func, jac_func, dim, start=path_0[0], end=path_0[-1], D=D)
     sol_dict = minimize(fun, path_0[1:-1], jac=jac)
-    path_sol = reshape_path(sol_dict["x"], dim, start=path_0[0], end=path_0[-1])
+    path_sol = _reshape_path_legacy(sol_dict["x"], dim, start=path_0[0], end=path_0[-1])
 
     return path_sol, sol_dict
