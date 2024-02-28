@@ -11,7 +11,7 @@ from anndata import AnnData
 from matplotlib.axes import Axes
 
 from .scatters import docstrings, scatters
-from .utils import save_show_ret
+from .utils import save_show_ret,create_edge_patch
 
 docstrings.delete_params("scatters.parameters", "aggregate", "kwargs", "save_kwargs")
 
@@ -245,26 +245,6 @@ def state_graph(
     return save_show_ret("state_graph", save_show_or_return, save_kwargs, (axes_list, color_list, font_color), adjust = show_legend)
 
 
-def create_edge_patch(posA, posB, width=1, node_rad=0, connectionstyle="arc3, rad=0.25", facecolor="k", **kwargs):
-    import matplotlib.patches as pat
-
-    style = "simple,head_length=%d,head_width=%d,tail_width=%d" % (
-        10,
-        10,
-        3 * width,
-    )
-    return pat.FancyArrowPatch(
-        posA=posA,
-        posB=posB,
-        arrowstyle=style,
-        connectionstyle=connectionstyle,
-        facecolor=facecolor,
-        shrinkA=node_rad,
-        shrinkB=node_rad,
-        **kwargs,
-    )
-
-
 def create_edge_patches_from_markov_chain(
     P,
     X,
@@ -313,7 +293,9 @@ def create_edge_patches_from_markov_chain(
                     create_edge_patch(
                         X[i],
                         X[j],
-                        width=P[i, j] * width,
+                        head_length=10,
+                        head_width=10,
+                        tail_width=P[i, j] * width*3,
                         node_rad=node_rad,
                         connectionstyle=connectionstyle,
                         facecolor=fc,

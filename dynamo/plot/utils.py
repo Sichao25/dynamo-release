@@ -1966,6 +1966,37 @@ def plot_polygon(polygon, margin=1, fc="#999999", ec="#000000", fill=True, ax=No
 
 
 # ---------------------------------------------------------------------------------------------------
+# network related
+def create_edge_patch(
+    posA,
+    posB,
+    node_rad=0,
+    connectionstyle="arc3, rad=0.25",
+    facecolor="k",
+    head_length=10,
+    head_width=10,
+    tail_width=3,
+    **kwargs,
+):
+    import matplotlib.patches as pat
+    style = "simple,head_length=%d,head_width=%d,tail_width=%d" % (
+        head_length,
+        head_width,
+        tail_width,
+    )
+    return pat.FancyArrowPatch(
+        posA=posA,
+        posB=posB,
+        arrowstyle=style,
+        connectionstyle=connectionstyle,
+        facecolor=facecolor,
+        shrinkA=node_rad,
+        shrinkB=node_rad,
+        **kwargs,
+    )
+
+
+# ---------------------------------------------------------------------------------------------------
 # the following Loess class is taken from:
 # link: https://github.com/joaofig/pyloess/blob/master/pyloess/Loess.py
 

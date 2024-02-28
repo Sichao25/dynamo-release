@@ -4,63 +4,7 @@ import numpy as np
 from matplotlib.patches import ConnectionPatch
 
 from ..utils import areinstance
-
-
-def create_edge_patch(
-    posA,
-    posB,
-    node_rad=0,
-    connectionstyle="arc3, rad=0.25",
-    facecolor="k",
-    head_length=10,
-    head_width=10,
-    tail_width=3,
-    **kwargs,
-):
-    style = "simple,head_length=%d,head_width=%d,tail_width=%d" % (
-        head_length,
-        head_width,
-        tail_width,
-    )
-    return pat.FancyArrowPatch(
-        posA=posA,
-        posB=posB,
-        arrowstyle=style,
-        connectionstyle=connectionstyle,
-        facecolor=facecolor,
-        shrinkA=node_rad,
-        shrinkB=node_rad,
-        **kwargs,
-    )
-
-
-def create_edge_patches_from_markov_chain(
-    P,
-    X,
-    width=3,
-    node_rad=0,
-    tol=1e-7,
-    connectionstyle="arc3, rad=0.25",
-    facecolor="k",
-    **kwargs,
-):
-    arrows = []
-    for i in range(P.shape[0]):
-        for j in range(P.shape[0]):
-            if P[j, i] > tol:
-                arrows.append(
-                    create_edge_patch(
-                        X[i],
-                        X[j],
-                        tail_width=P[j, i] * width,
-                        node_rad=node_rad,
-                        connectionstyle=connectionstyle,
-                        facecolor=facecolor,
-                        alpha=min(2 * P[j, i], 1),
-                        **kwargs,
-                    )
-                )
-    return arrows
+from .utils import create_edge_patch
 
 
 def plot_alternate_function(X, E, arrowstype="-|>", node_rad=5, arrow_size=10, fc="w"):
