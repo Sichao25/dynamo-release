@@ -64,5 +64,5 @@ from .vector_calculus import (
 )
 
 # vfGraph operation related:
-from .vfGraph_deprecated import vfGraph
+from .deprecated import vfGraph
 from .Wang import MFPT, Wang_action, Wang_LAP, transition_rate

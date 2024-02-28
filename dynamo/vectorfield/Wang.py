@@ -43,6 +43,37 @@ def Wang_action(X_input: np.ndarray, F: Callable, D: float, dim: int, N: int, la
     return S_HJ
 
 
+def Wang_LAP(
+    F: Callable, n_points: int, point_start: np.ndarray, point_end: np.ndarray, D: float = 0.1, lambda_: float = 1
+) -> OptimizeResult:
+    """Calculating least action path based methods from Jin Wang and colleagues (http://www.pnas.org/cgi/doi/10.1073/pnas.1017017108)
+
+    Args:
+        F: The reconstructed vector field function
+        n_points: The number of points along the least action path.
+        point_start: The matrix for storing the coordinates (gene expression configuration) of the start point (initial cell state).
+        point_end: The matrix for storing the coordinates (gene expression configuration) of the end point (terminal cell state).
+        D: The diffusion constant. Note that this can be a space-dependent matrix.
+        lamada_: Regularization parameter
+
+    Returns:
+        The least action path and the action way of the inferred path.
+    """
+    initpath = point_start.dot(np.ones((1, n_points + 1))) + (point_end - point_start).dot(
+        np.linspace(0, 1, n_points + 1, endpoint=True).reshape(1, -1)
+    )
+
+    dim, N = initpath.shape
+    # update this optimization method
+    res = optimize.basinhopping(
+        Wang_action,
+        x0=initpath,
+        minimizer_kwargs={"args": (F, D, dim, N, lambda_)},
+    )
+
+    return res
+
+
 def V_jacobina(F, X):
     import numdifftools as nda
 
@@ -78,37 +109,6 @@ def delta_delta_l(X_input) -> Tuple[np.ndarray, float]:
     delta_l = np.sqrt(np.sum(delta**2, 0))
 
     return delta, delta_l
-
-
-def Wang_LAP(
-    F: Callable, n_points: int, point_start: np.ndarray, point_end: np.ndarray, D: float = 0.1, lambda_: float = 1
-) -> OptimizeResult:
-    """Calculating least action path based methods from Jin Wang and colleagues (http://www.pnas.org/cgi/doi/10.1073/pnas.1017017108)
-
-    Args:
-        F: The reconstructed vector field function
-        n_points: The number of points along the least action path.
-        point_start: The matrix for storing the coordinates (gene expression configuration) of the start point (initial cell state).
-        point_end: The matrix for storing the coordinates (gene expression configuration) of the end point (terminal cell state).
-        D: The diffusion constant. Note that this can be a space-dependent matrix.
-        lamada_: Regularization parameter
-
-    Returns:
-        The least action path and the action way of the inferred path.
-    """
-    initpath = point_start.dot(np.ones((1, n_points + 1))) + (point_end - point_start).dot(
-        np.linspace(0, 1, n_points + 1, endpoint=True).reshape(1, -1)
-    )
-
-    dim, N = initpath.shape
-    # update this optimization method
-    res = optimize.basinhopping(
-        Wang_action,
-        x0=initpath,
-        minimizer_kwargs={"args": (F, D, dim, N, lambda_)},
-    )
-
-    return res
 
 
 def transition_rate(X_input: np.ndarray, F: Callable, D: float = 0.1, lambda_: float = 1) -> np.ndarray:

@@ -844,6 +844,40 @@ if use_dynode:
             return cls(X=None, V=None, Grid=None, dynode_object=dynode_object)
 
 
+class BifurcationTwoGenesVectorField(DifferentiableVectorField):
+    def __init__(
+        self,
+        param_dict,
+        X: Optional[np.ndarray] = None,
+        V: Optional[np.ndarray] = None,
+        Grid: Optional[np.ndarray] = None,
+        *args,
+        **kwargs,
+    ):
+        super().__init__(X, V, Grid, *args, **kwargs)
+        param_dict_ = param_dict.copy()
+        for k in param_dict_.keys():
+            if k not in ["a", "b", "S", "K", "m", "n", "gamma"]:
+                del param_dict_[k]
+                main_warning(f"The parameter {k} is not used for the vector field.")
+        self.vf_dict["params"] = param_dict_
+        self.func = lambda x: ode_bifur2genes(x, **param_dict_)
+
+    def get_Jacobian(self, method=None):
+        return lambda x: jacobian_bifur2genes(x, **self.vf_dict["params"])
+
+    def find_fixed_points(self, n_x0: int = 10, **kwargs):
+        a = self.vf_dict["params"]["a"]
+        b = self.vf_dict["params"]["b"]
+        gamma = self.vf_dict["params"]["gamma"]
+        xss = (a + b) / gamma
+        margin = 10
+        domain = np.array([[0, xss[0] + margin], [0, xss[1] + margin]])
+        return super().find_fixed_points(n_x0, X0=None, domain=domain, **kwargs)
+
+    # TODO: nullcline calculation
+
+
 def vector_field_function_knockout(
     adata,
     vecfld: Union[Callable, BaseVectorField],
@@ -901,40 +935,6 @@ def vector_field_function_knockout(
         return vf
     else:
         return vf.func
-
-
-class BifurcationTwoGenesVectorField(DifferentiableVectorField):
-    def __init__(
-        self,
-        param_dict,
-        X: Optional[np.ndarray] = None,
-        V: Optional[np.ndarray] = None,
-        Grid: Optional[np.ndarray] = None,
-        *args,
-        **kwargs,
-    ):
-        super().__init__(X, V, Grid, *args, **kwargs)
-        param_dict_ = param_dict.copy()
-        for k in param_dict_.keys():
-            if k not in ["a", "b", "S", "K", "m", "n", "gamma"]:
-                del param_dict_[k]
-                main_warning(f"The parameter {k} is not used for the vector field.")
-        self.vf_dict["params"] = param_dict_
-        self.func = lambda x: ode_bifur2genes(x, **param_dict_)
-
-    def get_Jacobian(self, method=None):
-        return lambda x: jacobian_bifur2genes(x, **self.vf_dict["params"])
-
-    def find_fixed_points(self, n_x0: int = 10, **kwargs):
-        a = self.vf_dict["params"]["a"]
-        b = self.vf_dict["params"]["b"]
-        gamma = self.vf_dict["params"]["gamma"]
-        xss = (a + b) / gamma
-        margin = 10
-        domain = np.array([[0, xss[0] + margin], [0, xss[1] + margin]])
-        return super().find_fixed_points(n_x0, X0=None, domain=domain, **kwargs)
-
-    # TODO: nullcline calculation
 
 
 def SparseVFC(
